@@ -41,12 +41,13 @@ def copy_files_to_root():
 
 def stage_and_commit(repo, commit_message):
     """
-    Function to stage untracked and modified files, and handle deleted files, then create a commit.
+    Function to stage untracked and modified files, handle deleted files, and create a commit.
+    This function respects .gitignore.
     """
-    # List and stage untracked files
-    untracked_files = repo.untracked_files
+    # List untracked files, excluding ignored files based on .gitignore
+    untracked_files = repo.git.ls_files("--others", "--exclude-standard").splitlines()
     if untracked_files:
-        print("Staging untracked files:")
+        print("Staging untracked files (excluding ignored files):")
         print(untracked_files)
         repo.index.add(untracked_files)
 
@@ -67,7 +68,7 @@ def stage_and_commit(repo, commit_message):
         file for file in modified_files if file not in deleted_files
     ]
     if remaining_modified_files:
-        print("Staging modified files:")
+        print("Staging modified files (excluding ignored files):")
         print(remaining_modified_files)
         repo.index.add(remaining_modified_files)
 
