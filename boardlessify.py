@@ -1,18 +1,7 @@
-import subprocess
 import os
 import shutil
 import yaml
-
-
-def run_command(command):
-    """
-    Utility function to run shell commands and return the output.
-    """
-    result = subprocess.run(command, shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"Error running command: {command}\n{result.stderr}")
-        return None
-    return result.stdout.strip()
+from git import Repo, GitCommandError
 
 
 def copy_files_to_root():
@@ -50,26 +39,30 @@ def copy_files_to_root():
         print(f"Error copying directory {dir_to_copy}: {e}")
 
 
-def stage_and_commit(commit_message):
+def stage_and_commit(repo, commit_message):
     """
     Function to stage untracked and modified files, then create a commit.
     """
     # List and stage untracked files
-    untracked_files = run_command("git ls-files --others --exclude-standard")
+    untracked_files = repo.untracked_files
     if untracked_files:
         print("Staging untracked files:")
         print(untracked_files)
-        run_command(f"git add {untracked_files}")
+        repo.index.add(untracked_files)
 
     # List and stage modified files
-    modified_files = run_command("git ls-files --modified")
-    if modified_files:
+    changed_files = [item.a_path for item in repo.index.diff(None)]
+    if changed_files:
         print("Staging modified files:")
-        print(modified_files)
-        run_command(f"git add {modified_files}")
+        print(changed_files)
+        repo.index.add(changed_files)
 
     # Create a commit
-    run_command(f'git commit -m "{commit_message}"')
+    if untracked_files or changed_files:
+        repo.index.commit(commit_message)
+        print(f"Commit made: {commit_message}")
+    else:
+        print("No changes to commit.")
 
 
 def cleanup_yaml_and_files():
@@ -120,25 +113,38 @@ def cleanup_yaml_and_files():
 
 
 def main():
+    try:
+        # Initialize the repository
+        repo = Repo(os.getcwd())
+        assert not repo.bare
+    except GitCommandError as e:
+        print(f"Error accessing the repository: {e}")
+        return
+
     # Step 1: Print the current branch name
-    current_branch = run_command("git branch --show-current")
+    current_branch = repo.active_branch.name
     print(f"Current branch: {current_branch}")
 
     # Step 2, 3, 4: Stage files and commit with "Initial Boardful commit"
-    stage_and_commit("Initial Boardful commit")
-    
-    # Extra Step: Copy files and directories to root
-    copy_files_to_root()
+    stage_and_commit(repo, "Initial Boardful commit")
+
+    # # Extra Step: Copy files and directories to root
+    # copy_files_to_root()
 
     # # Step 5: Create a new local branch named "dev" and check out to it
-    # run_command("git checkout -b dev")
-    # print("Created and switched to branch 'dev'.")
+    # try:
+    #     dev_branch = repo.create_head("dev")
+    #     dev_branch.checkout()
+    #     print("Created and switched to branch 'dev'.")
+    # except GitCommandError as e:
+    #     print(f"Error creating or checking out the 'dev' branch: {e}")
+    #     return
 
     # # Step 6: Cleanup YAML and .pintool files
     # cleanup_yaml_and_files()
 
     # # Step 7, 8, 9: Stage files and commit with "Initial Boardless commit"
-    # stage_and_commit("Initial Boardless commit")
+    # stage_and_commit(repo, "Initial Boardless commit")
 
 
 if __name__ == "__main__":
