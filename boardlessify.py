@@ -152,26 +152,33 @@ def main():
     # Step 1: Print the current branch name
     current_branch = repo.active_branch.name
     print(f"Current branch: {current_branch}")
-
-    # Step 2, 3, 4: Stage files and commit with "Initial Boardful commit"
-    stage_and_commit(repo, "Initial Boardful commit")
-
-    # Extra Step: Copy files and directories to root
-    copy_files_to_root()
-
-    # Step 5: Create a new local branch named "dev" and check out to it
+    
+    # Step 2: Create a new local branch named "dev" but do not checkout now
     try:
         dev_branch = repo.create_head("dev")
+        print("Created branch 'dev'.")
+    except GitCommandError as e:
+        print(f"Error creating the 'dev' branch: {e}")
+        return
+
+    # Step 3, 4, 5: Stage files and commit with "Initial Boardful commit"
+    stage_and_commit(repo, "Initial Boardful commit")
+
+    # Step 6: Check out to dev branch
+    try:
         dev_branch.checkout()
-        print("Created and switched to branch 'dev'.")
+        print("Switched to branch 'dev'.")
     except GitCommandError as e:
         print(f"Error creating or checking out the 'dev' branch: {e}")
         return
 
-    # Step 6: Cleanup YAML and .pintool files
+    # Step 7: Copy boardlessify files and directories to root
+    copy_files_to_root()
+
+    # Step 8: Cleanup YAML and .pintool files
     cleanup_yaml_and_files()
 
-    # Step 7, 8, 9: Stage files and commit with "Initial Boardless commit"
+    # Step 8, 9, 10: Stage files and commit with "Initial Boardless commit"
     stage_and_commit(repo, "Initial Boardless commit")
 
 
