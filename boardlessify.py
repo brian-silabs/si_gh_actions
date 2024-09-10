@@ -41,7 +41,7 @@ def copy_files_to_root():
 
 def stage_and_commit(repo, commit_message):
     """
-    Function to stage untracked and modified files, then create a commit.
+    Function to stage untracked and modified files, and handle deleted files, then create a commit.
     """
     # List and stage untracked files
     untracked_files = repo.untracked_files
@@ -50,15 +50,29 @@ def stage_and_commit(repo, commit_message):
         print(untracked_files)
         repo.index.add(untracked_files)
 
-    # List and stage modified files
-    changed_files = [item.a_path for item in repo.index.diff(None)]
-    if changed_files:
+    # List modified files (added, modified, or deleted)
+    modified_files = [item.a_path for item in repo.index.diff(None)]
+    deleted_files = [
+        item.a_path for item in repo.index.diff(None) if item.change_type == "D"
+    ]
+
+    # Remove deleted files from the index
+    if deleted_files:
+        print("Staging deleted files:")
+        print(deleted_files)
+        repo.index.remove(deleted_files)
+
+    # Stage the remaining modified files
+    remaining_modified_files = [
+        file for file in modified_files if file not in deleted_files
+    ]
+    if remaining_modified_files:
         print("Staging modified files:")
-        print(changed_files)
-        repo.index.add(changed_files)
+        print(remaining_modified_files)
+        repo.index.add(remaining_modified_files)
 
     # Create a commit
-    if untracked_files or changed_files:
+    if untracked_files or modified_files or deleted_files:
         repo.index.commit(commit_message)
         print(f"Commit made: {commit_message}")
     else:
@@ -67,7 +81,7 @@ def stage_and_commit(repo, commit_message):
 
 def cleanup_yaml_and_files():
     """
-    Function to clean up .slcp (YAML) and .pintool files.
+    Function to clean up the 'component' list in .slcp (YAML) files by removing entries where 'id' starts with 'brd' or 'EFR32'.
     """
     # Step 6a: Look for a .slcp file
     slcp_file = None
@@ -81,18 +95,31 @@ def cleanup_yaml_and_files():
 
     if slcp_file:
         print(f"Found .slcp file: {slcp_file}")
+
+        # Read the .slcp file
         with open(slcp_file, "r") as file:
             yaml_data = yaml.safe_load(file)
 
-        # Step 6b and 6c: Remove entries that start with "brd" or "efr32"
-        yaml_data = {
-            k: v
-            for k, v in yaml_data.items()
-            if not (k.startswith("brd") or k.startswith("efr32"))
-        }
+        # Step 6b and 6c: Modify the 'component' list by removing entries that have 'id' starting with 'brd' or 'EFR32'
+        if "component" in yaml_data and isinstance(yaml_data["component"], list):
+            updated_component_list = []
+            for item in yaml_data["component"]:
+                # Check if the item is a dictionary with an 'id' key
+                if isinstance(item, dict) and "id" in item:
+                    id_value = item["id"]
+                    if id_value.startswith("brd") or id_value.startswith("EFR32"):
+                        print(f"Removing component with id: {id_value}")
+                        continue
+                # Keep the item if it does not match the removal criteria
+                updated_component_list.append(item)
 
+            # Update the YAML data
+            yaml_data["component"] = updated_component_list
+
+        # Write the updated YAML back to the file
         with open(slcp_file, "w") as file:
             yaml.safe_dump(yaml_data, file)
+
         print("Updated .slcp file.")
 
     # Step 6d: Look for a .pintool file and delete it
@@ -128,23 +155,23 @@ def main():
     # Step 2, 3, 4: Stage files and commit with "Initial Boardful commit"
     stage_and_commit(repo, "Initial Boardful commit")
 
-    # # Extra Step: Copy files and directories to root
-    # copy_files_to_root()
+    # Extra Step: Copy files and directories to root
+    copy_files_to_root()
 
-    # # Step 5: Create a new local branch named "dev" and check out to it
-    # try:
-    #     dev_branch = repo.create_head("dev")
-    #     dev_branch.checkout()
-    #     print("Created and switched to branch 'dev'.")
-    # except GitCommandError as e:
-    #     print(f"Error creating or checking out the 'dev' branch: {e}")
-    #     return
+    # Step 5: Create a new local branch named "dev" and check out to it
+    try:
+        dev_branch = repo.create_head("dev")
+        dev_branch.checkout()
+        print("Created and switched to branch 'dev'.")
+    except GitCommandError as e:
+        print(f"Error creating or checking out the 'dev' branch: {e}")
+        return
 
-    # # Step 6: Cleanup YAML and .pintool files
-    # cleanup_yaml_and_files()
+    # Step 6: Cleanup YAML and .pintool files
+    cleanup_yaml_and_files()
 
-    # # Step 7, 8, 9: Stage files and commit with "Initial Boardless commit"
-    # stage_and_commit(repo, "Initial Boardless commit")
+    # Step 7, 8, 9: Stage files and commit with "Initial Boardless commit"
+    stage_and_commit(repo, "Initial Boardless commit")
 
 
 if __name__ == "__main__":
