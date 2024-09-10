@@ -12,6 +12,7 @@ autogen/
 .settings
 
 GNU ARM v12.2.1 - Debug/
+GNU ARM v12.2.1 - Default/
 
 # Vscode Project Gitignore
 .vscode/
