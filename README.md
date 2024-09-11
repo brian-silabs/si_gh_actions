@@ -26,7 +26,11 @@ Once done :
 
 ## Issues
 
-* .gitignore not applied on new dev branch
-  * But confi/zcl or bt must be kept
 * Currently building only on BRD4186C
-    Maybe using a matrix config based on a json file
+  * Maybe using a matrix config based on a json file
+* Not tested with Bootloader projects
+  * post build steps
+* Does not support workspaces
+* Dynamic Zap version
+* Update feature if submodule has one
+  * Will allow for new sdk and toolchain support
