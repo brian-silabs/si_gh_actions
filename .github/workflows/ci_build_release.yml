@@ -18,7 +18,6 @@ jobs:
           echo "SOLUTION_REL_DIR=solution" >> $GITHUB_ENV
           echo "DEPENDENCIES_REL_DIR=dependencies" >> $GITHUB_ENV
           echo "TOOLS_REL_DIR=tools" >> $GITHUB_ENV
-          echo "ZAP_VERSION=v2024.08.15" >> $GITHUB_ENV
           echo "ARM_GCC_ABS_DIR=/opt/gcc-arm-none-eabi" >> $GITHUB_ENV
           echo "ARM_GCC_BIN_ABS_DIR=/opt/gcc-arm-none-eabi/bin" >> $GITHUB_ENV
 
@@ -151,12 +150,20 @@ jobs:
   #   needs: prepare_build_environment
   #   runs-on: ubuntu-latest
   #   steps:
+      - name: Get Latest Zap Version
+        uses: oprypin/find-latest-tag@v1
+        with:
+          repository: project-chip/zap  # The repository to scan.
+          releases-only: true 
+          regex: '^v\d{4}\.\d{2}\.\d{2}$'
+        id: zap_latest  # The step ID to refer to later.
+
       # Download ZAP Tool for Zigbee projects
       - name: Checkout ZAP Tool 
         uses: actions/checkout@v4
         with:
           repository: project-chip/zap
-          ref: ${{ env.ZAP_VERSION }} # Should be retrieved somewhere
+          ref: ${{ steps.zap_latest.outputs.tag }}
           path: ${{ env.ZAP_REL_DIR }}
           token: ${{ secrets.ACCESS_TOKEN }}
 
