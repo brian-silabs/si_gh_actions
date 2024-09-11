@@ -19,7 +19,6 @@ jobs:
           echo "DEPENDENCIES_REL_DIR=dependencies" >> $GITHUB_ENV
           echo "TOOLS_REL_DIR=tools" >> $GITHUB_ENV
           echo "ZAP_VERSION=v2024.08.15" >> $GITHUB_ENV
-          echo "ARM_GCC_VERSION=12.2.Rel1" >> $GITHUB_ENV
           echo "ARM_GCC_ABS_DIR=/opt/gcc-arm-none-eabi" >> $GITHUB_ENV
           echo "ARM_GCC_BIN_ABS_DIR=/opt/gcc-arm-none-eabi/bin" >> $GITHUB_ENV
 
@@ -93,6 +92,13 @@ jobs:
         with:
           from-file: ${{ env.SLCP_REL_PATH }} # Requires relative path
 
+      # Read the Toolchain dependencies contents
+      - name: Read Toolchain dependencies contents
+        id: read_toolchain
+        uses: teunmooij/yaml@v1
+        with:
+          from-file: ${{ env.SOLUTION_REL_DIR }}/.github/sdk_toolchain_dependencies.yml
+
       # Add Project Name and required SDK version to ENV variables
       - name: Update env vars with Project SLCP extracted data
         run: |
@@ -103,6 +109,7 @@ jobs:
           echo "PROJECT_NAME=${{ fromJson(steps.read_slcp.outputs.data).project_name }}" >> $GITHUB_ENV
           echo "CMAKE_WORKING_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/${{ fromJson(steps.read_slcp.outputs.data).project_name }}_cmake" >> $GITHUB_ENV
           echo "BINARIES_OUTPUT_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/${{ fromJson(steps.read_slcp.outputs.data).project_name }}_cmake/build/default_config" >> $GITHUB_ENV
+          echo "ARM_GCC_VERSION=${{ fromJson(steps.read_toolchain.outputs.data)[format('{0}', (fromJson(steps.read_slcp.outputs.data).sdk).id )][format('v{0}', (fromJson(steps.read_slcp.outputs.data).sdk).version )].gcc }}" >> $GITHUB_ENV
 
       # Download Simplicity SDK
       - name: Checkout SiSDK 
