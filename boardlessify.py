@@ -41,12 +41,13 @@ def copy_files_to_root():
 
 def stage_and_commit(repo, commit_message):
     """
-    Function to stage untracked and modified files, and handle deleted files, then create a commit.
+    Function to stage untracked and modified files, handle deleted files, and create a commit.
+    This function respects .gitignore.
     """
-    # List and stage untracked files
-    untracked_files = repo.untracked_files
+    # List untracked files, excluding ignored files based on .gitignore
+    untracked_files = repo.git.ls_files("--others", "--exclude-standard").splitlines()
     if untracked_files:
-        print("Staging untracked files:")
+        print("Staging untracked files (excluding ignored files):")
         print(untracked_files)
         repo.index.add(untracked_files)
 
@@ -62,12 +63,23 @@ def stage_and_commit(repo, commit_message):
         print(deleted_files)
         repo.index.remove(deleted_files)
 
+    # Handle files newly filtered out by .gitignore
+    ignored_files = repo.git.ls_files(
+        "--ignored", "--cached", "--exclude-standard"
+    ).splitlines()
+
+    # Remove deleted files from the index
+    if ignored_files:
+        print("Staging ignored files:")
+        print(ignored_files)
+        repo.index.remove(ignored_files)
+
     # Stage the remaining modified files
     remaining_modified_files = [
         file for file in modified_files if file not in deleted_files
     ]
     if remaining_modified_files:
-        print("Staging modified files:")
+        print("Staging modified files (excluding ignored files):")
         print(remaining_modified_files)
         repo.index.add(remaining_modified_files)
 
@@ -121,22 +133,6 @@ def cleanup_yaml_and_files():
             yaml.safe_dump(yaml_data, file)
 
         print("Updated .slcp file.")
-
-    # Step 6d: Look for a .pintool file and delete it
-    pintool_file = None
-    for root, _, files in os.walk("."):
-        for file in files:
-            if file.endswith(".pintool"):
-                pintool_file = os.path.join(root, file)
-                break
-        if pintool_file:
-            break
-
-    if pintool_file:
-        print(f"Found .pintool file: {pintool_file}. Deleting it.")
-        os.remove(pintool_file)
-    else:
-        print("No .pintool file found.")
 
 
 def main():

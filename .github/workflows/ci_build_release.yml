@@ -9,7 +9,7 @@ on:
       - dev
 
 jobs:
-  prepare_build_environment:
+  generate_build_and_release:
     runs-on: ubuntu-latest
     steps:
       # Prepare all global env vars
@@ -108,10 +108,17 @@ jobs:
       - name: Checkout SiSDK 
         uses: actions/checkout@v4
         with:
+          lfs: false # Requires below workaround
           repository: SiliconLabs/${{ env.SDK_ID }}
           ref: v${{ env.SDK_VERSION }}-0 # Silicon Labs changes the versioning scheme very often
           path: ${{ env.SDK_REL_DIR }}
           token: ${{ secrets.ACCESS_TOKEN }}
+
+      # Workaround for lfs files, static libraries
+      - name: LFS checkout
+        run: |
+          cd ${{ env.SDK_ABS_DIR }}
+          git lfs pull
 
       # Download Commander to generate projects
       - name: Download and Unzip Simplicity Commander

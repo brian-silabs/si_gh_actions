@@ -1,7 +1,11 @@
 # All IDEs 
 simplicity_sdk_*/
+*.pintool
 *.slps
-config/
+config/*
+!config/zcl
+!config/btconf
+!config/rail
 autogen/
 
 # Simplicity IDE Gitignore
