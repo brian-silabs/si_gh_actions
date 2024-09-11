@@ -63,6 +63,17 @@ def stage_and_commit(repo, commit_message):
         print(deleted_files)
         repo.index.remove(deleted_files)
 
+    # Handle files newly filtered out by .gitignore
+    ignored_files = repo.git.ls_files(
+        "--ignored", "--cached", "--exclude-standard"
+    ).splitlines()
+
+    # Remove deleted files from the index
+    if ignored_files:
+        print("Staging ignored files:")
+        print(ignored_files)
+        repo.index.remove(ignored_files)
+
     # Stage the remaining modified files
     remaining_modified_files = [
         file for file in modified_files if file not in deleted_files
@@ -123,22 +134,6 @@ def cleanup_yaml_and_files():
 
         print("Updated .slcp file.")
 
-    # Step 6d: Look for a .pintool file and delete it
-    pintool_file = None
-    for root, _, files in os.walk("."):
-        for file in files:
-            if file.endswith(".pintool"):
-                pintool_file = os.path.join(root, file)
-                break
-        if pintool_file:
-            break
-
-    if pintool_file:
-        print(f"Found .pintool file: {pintool_file}. Deleting it.")
-        os.remove(pintool_file)
-    else:
-        print("No .pintool file found.")
-
 
 def main():
     try:
@@ -152,33 +147,26 @@ def main():
     # Step 1: Print the current branch name
     current_branch = repo.active_branch.name
     print(f"Current branch: {current_branch}")
-    
-    # Step 2: Create a new local branch named "dev" but do not checkout now
-    try:
-        dev_branch = repo.create_head("dev")
-        print("Created branch 'dev'.")
-    except GitCommandError as e:
-        print(f"Error creating the 'dev' branch: {e}")
-        return
 
-    # Step 3, 4, 5: Stage files and commit with "Initial Boardful commit"
+    # Step 2, 3, 4: Stage files and commit with "Initial Boardful commit"
     stage_and_commit(repo, "Initial Boardful commit")
 
-    # Step 6: Check out to dev branch
+    # Extra Step: Copy files and directories to root
+    copy_files_to_root()
+
+    # Step 5: Create a new local branch named "dev" and check out to it
     try:
+        dev_branch = repo.create_head("dev")
         dev_branch.checkout()
-        print("Switched to branch 'dev'.")
+        print("Created and switched to branch 'dev'.")
     except GitCommandError as e:
         print(f"Error creating or checking out the 'dev' branch: {e}")
         return
 
-    # Step 7: Copy boardlessify files and directories to root
-    copy_files_to_root()
-
-    # Step 8: Cleanup YAML and .pintool files
+    # Step 6: Cleanup YAML and .pintool files
     cleanup_yaml_and_files()
 
-    # Step 8, 9, 10: Stage files and commit with "Initial Boardless commit"
+    # Step 7, 8, 9: Stage files and commit with "Initial Boardless commit"
     stage_and_commit(repo, "Initial Boardless commit")
 
 
