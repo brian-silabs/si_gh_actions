@@ -10,6 +10,7 @@ Locally :
 * `git remote add origin "url"`
 * `git pull origin main`
 * `git submodule add [https://github.com/brian-silabs/si_gh_actions.git](https://github.com/brian-silabs/si_gh_actions.git)`
+* `pip install -r si_gh_actions/requirements.txt`
 * `python3 si_gh_actions/boardlessify.py`
 
 On Github :
