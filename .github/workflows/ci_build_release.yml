@@ -136,7 +136,7 @@ jobs:
         run: |
           curl -LO https://www.silabs.com/documents/public/software/SimplicityCommander-Linux.zip
           unzip -qq SimplicityCommander-Linux.zip 
-          tar -xf ./SimplicityCommander-Linux/Commander_linux_x86_64_1v16p11b1660.tar.bz -C ${{ env.TOOLS_ABS_DIR }}
+          tar -xf ./SimplicityCommander-Linux/Commander_linux_x86_64_*.tar.bz -C ${{ env.TOOLS_ABS_DIR }}
 
       # Download SLC CLI to generate projects
       - name: Download and Unzip SLC CLI
