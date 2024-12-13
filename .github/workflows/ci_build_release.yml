@@ -121,7 +121,7 @@ jobs:
         with:
           lfs: false # Requires below workaround
           repository: SiliconLabs/${{ env.SDK_ID }}
-          ref: v${{ env.SDK_VERSION }}-0 # Silicon Labs changes the versioning scheme very often
+          ref: v${{ env.SDK_VERSION }} # -0 for SiSDK 2024.6.1 # Silicon Labs changes the versioning scheme very often
           path: ${{ env.SDK_REL_DIR }}
           token: ${{ secrets.ACCESS_TOKEN }}
 
