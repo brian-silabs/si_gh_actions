@@ -12,6 +12,7 @@ def copy_files_to_root():
         "si_gh_actions/CHANGELOG.md",
         "si_gh_actions/VERSION.md",
         "si_gh_actions/.gitignore",
+        "si_gh_actions/target_info.yaml",
     ]
     dir_to_copy = "si_gh_actions/.github/"
 

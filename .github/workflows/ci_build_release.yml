@@ -121,7 +121,7 @@ jobs:
         with:
           lfs: false # Requires below workaround
           repository: SiliconLabs/${{ env.SDK_ID }}
-          ref: v${{ env.SDK_VERSION }} # -0 for SiSDK 2024.6.1 # Silicon Labs changes the versioning scheme very often
+          ref: v${{ env.SDK_VERSION }} # Silicon Labs changes the versioning scheme very often
           path: ${{ env.SDK_REL_DIR }}
           token: ${{ secrets.ACCESS_TOKEN }}
 
@@ -197,11 +197,24 @@ jobs:
           slc configuration -gcc ${{ env.ARM_GCC_ABS_DIR }} --sdk ${{ env.SDK_ABS_DIR }}
           slc signature trust --sdk ${{ env.SDK_ABS_DIR }}
 
+      # Gather Targets and configs from target_info.yaml file
+      - name: Gather Targets and configs from target_info.yaml file
+        id: read_build_configs
+        uses: teunmooij/yaml@v1
+        with:
+          from-file: ${{ env.SOLUTION_REL_DIR }}/target_info.yaml
+
+      # Export targets information
+      - name: Update env vars with Project SLCP extracted data
+        run: |
+          echo "TARGET_OPN=${{ (fromJson(steps.read_build_configs.outputs.data).targets[0]).target_opn }}" >> $GITHUB_ENV
+          echo "TARGET_CONFIGS=${{ (fromJson(steps.read_build_configs.outputs.data).targets[0]).configs }}" >> $GITHUB_ENV
+        
       # Generate Project for CI build - TODO change target board for matrix builds based on configuration file
       - name: SLC Generate Project for local build
         run: |
           cd ${{ env.SOLUTION_ABS_DIR }}
-          slc generate ${{ env.SLCP_FILENAME }} -cpsdk -tlcn gcc -o cmake --with brd4186c --configuration=SL_BOARD_ENABLE_VCOM:1
+          slc generate ${{ env.SLCP_FILENAME }} -cpsdk -tlcn gcc -o cmake --with ${{ env.TARGET_OPN }} --configuration=${{ env.TARGET_CONFIGS }}
 
       # Build Project
       - name: Build Project
