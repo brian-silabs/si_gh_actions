@@ -1,7 +1,7 @@
 targets:
-  - target_opn: "brd4186c"
-    configs: "SL_BOARD_ENABLE_VCOM:1"
-  - target_opn: "EFR32MG21A020F1024IM32"
-    configs: ""
-  - target_opn: "brd4181a"
-    configs: "SL_BOARD_ENABLE_VCOM:1,SL_BOARD_ENABLE_DISPLAY:0"
+#  - target_opn: "brd4186c"
+#    configs: "SL_BOARD_ENABLE_VCOM:1"
+#  - target_opn: "EFR32MG21A020F1024IM32"
+#    configs: ""
+#  - target_opn: "brd4181a"
+#    configs: "SL_BOARD_ENABLE_VCOM:1,SL_BOARD_ENABLE_DISPLAY:0"

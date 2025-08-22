@@ -11,7 +11,7 @@ Locally :
 * `git pull origin main`
 * `git submodule add [https://github.com/brian-silabs/si_gh_actions.git](https://github.com/brian-silabs/si_gh_actions.git)`
 * `pip install -r si_gh_actions/requirements.txt`
-* `python3 si_gh_actions/boardlessify.py`
+* `python3 si_gh_actions/ciify.py`
 
 On Github :
 

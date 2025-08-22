@@ -138,16 +138,28 @@ def cleanup_yaml_and_files():
 
 def main():
     try:
-        # Initialize the repository
+        # Open existing repo
         repo = Repo(os.getcwd())
         assert not repo.bare
     except GitCommandError as e:
         print(f"Error accessing the repository: {e}")
         return
 
-    # Step 1: Print the current branch name
-    current_branch = repo.active_branch.name
-    print(f"Current branch: {current_branch}")
+    # Check if 'main' branch exists
+    branch_names = [h.name for h in repo.heads]
+    if "main" in branch_names:
+        # Repo and main branch exist → just proceed from step 2
+        repo.git.checkout("main")
+        print("Checked out existing 'main' branch.")
+    else:
+        # Fresh repo scenario
+        print("No 'main' branch found. Using current branch as main.")
+        # (Optionally rename current branch to main if desired)
+        try:
+            repo.git.branch("-M", "main")
+        except GitCommandError as e:
+            print(f"Error renaming to 'main': {e}")
+            return
 
     # Step 2, 3, 4: Stage files and commit with "Initial Boardful commit"
     stage_and_commit(repo, "Initial Boardful commit")
@@ -163,9 +175,6 @@ def main():
     except GitCommandError as e:
         print(f"Error creating or checking out the 'dev' branch: {e}")
         return
-
-    # Step 6: Cleanup YAML and .pintool files
-    cleanup_yaml_and_files()
 
     # Step 7, 8, 9: Stage files and commit with "Initial Boardless commit"
     stage_and_commit(repo, "Initial Boardless commit")
