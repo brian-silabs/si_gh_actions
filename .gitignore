@@ -1,4 +1,5 @@
 # All IDEs 
+!.gitmodules
 
 # Simplicity IDE Gitignore
 
@@ -11,3 +12,5 @@ GNU ARM v12.2.1 - Default/
 settings/
 Default/
 ewarm-IAR
+
+# Any other pattern goes here

@@ -1,8 +1,108 @@
-import os
-import shutil
-import yaml
 from git import Repo, GitCommandError
+import os, shutil, configparser
 
+# ---------- helpers (add once) ----------
+
+def protect_gitmodules():
+    """
+    Make sure .gitmodules can't be ignored by an over-broad .gitignore.
+    """
+    if not os.path.exists(".gitignore"):
+        return
+    with open(".gitignore", "r+", encoding="utf-8") as f:
+        content = f.read()
+        if "!.gitmodules" not in content.splitlines():
+            f.write(("\n" if not content.endswith("\n") else "") + "!.gitmodules\n")
+            print("Added '!.gitmodules' to .gitignore for safety.")
+
+def branch_exists(repo, name: str) -> bool:
+    return any(h.name == name for h in repo.heads)
+
+def ensure_checked_out(repo, name: str):
+    if branch_exists(repo, name):
+        repo.git.checkout(name)
+    else:
+        # create from current HEAD
+        b = repo.create_head(name)
+        b.checkout()
+
+def has_commit_with_subject(repo, rev: str, subject: str) -> bool:
+    """Return True if any commit reachable from `rev` has `subject` as its one-line message."""
+    try:
+        for c in repo.iter_commits(rev):
+            if c.message.splitlines()[0].strip() == subject:
+                return True
+        return False
+    except Exception:
+        # rev might not exist yet
+        return False
+
+def preclean_submodule_git(path="si_gh_actions/.git"):
+    """
+    Ensure no nested .git directory exists inside the submodule working tree.
+    A proper submodule uses a *file* at si_gh_actions/.git that points to ../.git/modules/si_gh_actions
+    """
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+        print("Removed nested si_gh_actions/.git directory (prevent corruption).")
+
+def stage_submodule_and_ci(repo):
+    """
+    Stage only what we intend:
+    - .gitmodules
+    - the submodule gitlink (si_gh_actions)
+    - copied CI files (.github/**, CHANGELOG.md, VERSION.md, target_info.yaml)
+    """
+    # keep .gitmodules in the index
+    if os.path.exists(".gitmodules"):
+        repo.index.add([".gitmodules"])
+
+    # stage submodule path as gitlink (mode 160000)
+    repo.git.add("si_gh_actions")
+
+    # Force-stage .gitignore (bypass ignore rules)
+    if os.path.exists(".gitignore"):
+        repo.git.add("-f", ".gitignore")
+
+    # stage copied CI files
+    to_add = [p for p in ("CHANGELOG.md", "VERSION.md", "target_info.yaml") if os.path.exists(p)]
+    if to_add:
+        repo.index.add(to_add)
+    if os.path.isdir(".github"):
+        repo.git.add(".github")
+
+def assert_gitlink(repo, path="si_gh_actions"):
+    """
+    Verify the path is staged as a submodule gitlink (mode 160000).
+    """
+    try:
+        entry = repo.git.ls_files("--stage", path)  # "<mode> <sha> <stage>\tpath"
+        mode = entry.split()[0] if entry else ""
+        if not mode.startswith("160000"):
+            raise RuntimeError(f"{path} is not staged as a gitlink (mode=160000). Got '{mode or 'none'}'.")
+    except GitCommandError as e:
+        raise RuntimeError(f"Cannot verify gitlink for {path}: {e}")
+
+def commit_if_needed(repo, message):
+    if repo.is_dirty(index=True, working_tree=True, untracked_files=True):
+        repo.index.commit(message)
+        print(f"Commit made: {message}")
+    else:
+        print("No changes to commit.")
+
+def has_staged_changes(repo):
+    try:
+        repo.git.diff("--cached", "--quiet")
+        return False  # exit 0 → no changes
+    except GitCommandError:
+        return True   # nonzero → staged changes
+
+def commit_if_staged(repo, message):
+    if has_staged_changes(repo):
+        repo.index.commit(message)
+        print(f"Commit made: {message}")
+    else:
+        print("No staged changes; skipping commit.")
 
 def copy_files_to_root():
     """
@@ -39,146 +139,57 @@ def copy_files_to_root():
     except Exception as e:
         print(f"Error copying directory {dir_to_copy}: {e}")
 
-
-def stage_and_commit(repo, commit_message):
-    """
-    Function to stage untracked and modified files, handle deleted files, and create a commit.
-    This function respects .gitignore.
-    """
-    # List untracked files, excluding ignored files based on .gitignore
-    untracked_files = repo.git.ls_files("--others", "--exclude-standard").splitlines()
-    if untracked_files:
-        print("Staging untracked files (excluding ignored files):")
-        print(untracked_files)
-        repo.index.add(untracked_files)
-
-    # List modified files (added, modified, or deleted)
-    modified_files = [item.a_path for item in repo.index.diff(None)]
-    deleted_files = [
-        item.a_path for item in repo.index.diff(None) if item.change_type == "D"
-    ]
-
-    # Remove deleted files from the index
-    if deleted_files:
-        print("Staging deleted files:")
-        print(deleted_files)
-        repo.index.remove(deleted_files)
-
-    # Handle files newly filtered out by .gitignore
-    ignored_files = repo.git.ls_files(
-        "--ignored", "--cached", "--exclude-standard"
-    ).splitlines()
-
-    # Remove deleted files from the index
-    if ignored_files:
-        print("Staging ignored files:")
-        print(ignored_files)
-        repo.index.remove(ignored_files)
-
-    # Stage the remaining modified files
-    remaining_modified_files = [
-        file for file in modified_files if file not in deleted_files
-    ]
-    if remaining_modified_files:
-        print("Staging modified files (excluding ignored files):")
-        print(remaining_modified_files)
-        repo.index.add(remaining_modified_files)
-
-    # Create a commit
-    if untracked_files or modified_files or deleted_files:
-        repo.index.commit(commit_message)
-        print(f"Commit made: {commit_message}")
-    else:
-        print("No changes to commit.")
-
-
-def cleanup_yaml_and_files():
-    """
-    Function to clean up the 'component' list in .slcp (YAML) files by removing entries where 'id' starts with 'brd' or 'EFR32'.
-    """
-    # Step 6a: Look for a .slcp file
-    slcp_file = None
-    for root, _, files in os.walk("."):
-        for file in files:
-            if file.endswith(".slcp"):
-                slcp_file = os.path.join(root, file)
-                break
-        if slcp_file:
-            break
-
-    if slcp_file:
-        print(f"Found .slcp file: {slcp_file}")
-
-        # Read the .slcp file
-        with open(slcp_file, "r") as file:
-            yaml_data = yaml.safe_load(file)
-
-        # Step 6b and 6c: Modify the 'component' list by removing entries that have 'id' starting with 'brd' or 'EFR32'
-        if "component" in yaml_data and isinstance(yaml_data["component"], list):
-            updated_component_list = []
-            for item in yaml_data["component"]:
-                # Check if the item is a dictionary with an 'id' key
-                if isinstance(item, dict) and "id" in item:
-                    id_value = item["id"]
-                    if id_value.startswith("brd") or id_value.startswith("EFR32"):
-                        print(f"Removing component with id: {id_value}")
-                        continue
-                # Keep the item if it does not match the removal criteria
-                updated_component_list.append(item)
-
-            # Update the YAML data
-            yaml_data["component"] = updated_component_list
-
-        # Write the updated YAML back to the file
-        with open(slcp_file, "w") as file:
-            yaml.safe_dump(yaml_data, file)
-
-        print("Updated .slcp file.")
-
+# ---------- DROP-IN main() ----------
 
 def main():
-    try:
-        # Open existing repo
-        repo = Repo(os.getcwd())
-        assert not repo.bare
-    except GitCommandError as e:
-        print(f"Error accessing the repository: {e}")
-        return
+    repo = Repo(".")
 
-    # Check if 'main' branch exists
-    branch_names = [h.name for h in repo.heads]
-    if "main" in branch_names:
-        # Repo and main branch exist → just proceed from step 2
+    # --- get onto main (create/rename if needed) ---
+    if any(h.name == "main" for h in repo.heads):
         repo.git.checkout("main")
-        print("Checked out existing 'main' branch.")
+        print("Checked out existing 'main'.")
     else:
-        # Fresh repo scenario
-        print("No 'main' branch found. Using current branch as main.")
-        # (Optionally rename current branch to main if desired)
-        try:
-            repo.git.branch("-M", "main")
-        except GitCommandError as e:
-            print(f"Error renaming to 'main': {e}")
-            return
+        print("No 'main' branch found. Renaming current to 'main'.")
+        repo.git.branch("-M", "main")
 
-    # Step 2, 3, 4: Stage files and commit with "Initial Boardful commit"
-    stage_and_commit(repo, "Initial Boardful commit")
-
-    # Extra Step: Copy files and directories to root
-    copy_files_to_root()
-
-    # Step 5: Create a new local branch named "dev" and check out to it
+    # --- submodule hygiene BEFORE staging (your existing helpers) ---
+    protect_gitmodules()
+    preclean_submodule_git("si_gh_actions/.git")
     try:
-        dev_branch = repo.create_head("dev")
-        dev_branch.checkout()
-        print("Created and switched to branch 'dev'.")
+        repo.git.submodule("sync", "--recursive")
+        repo.git.submodule("update", "--init", "--recursive")
     except GitCommandError as e:
-        print(f"Error creating or checking out the 'dev' branch: {e}")
-        return
+        print(f"Submodule sync/update warning: {e}")
 
-    # Step 7, 8, 9: Stage files and commit with "Initial Boardless commit"
-    stage_and_commit(repo, "Initial Boardless commit")
+    # --- Only create the Boardful commit if it doesn't already exist on main ---
+    if not has_commit_with_subject(repo, "main", "Initial Boardful commit"):
+        stage_submodule_and_ci(repo)      # stages .gitmodules, gitlink, any pre-existing files
+        assert_gitlink(repo, "si_gh_actions")
+        commit_if_staged(repo, "Initial Boardful commit")
+    else:
+        print("Skip: 'Initial Boardful commit' already exists on main.")
 
+    # --- Ensure dev exists and is checked out ---
+    ensure_checked_out(repo, "dev")
+
+    # --- Copy CI files from submodule and commit them (but only once) ---
+    # If you want CI files included in the same Boardful commit, move copy_files_to_root()
+    # before stage_submodule_and_ci() above. Otherwise keep this as a separate (idempotent) step.
+    if not has_commit_with_subject(repo, "dev", "CI: add workflows and metadata"):
+        copy_files_to_root()
+        stage_submodule_and_ci(repo)
+        commit_if_staged(repo, "CI: add workflows and metadata")
+    else:
+        print("Skip: 'CI: add workflows and metadata' already exists on dev.")
+
+    # --- Only create the Boardless commit if it doesn't already exist on dev ---
+    if not has_commit_with_subject(repo, "dev", "Initial Boardless commit"):
+        # Old removal of SLCP contents would go here if needed
+        stage_submodule_and_ci(repo)      # harmless if no changes; keeps .gitmodules/gitlink staged
+        assert_gitlink(repo, "si_gh_actions")
+        commit_if_staged(repo, "Initial Boardless commit")
+    else:
+        print("Skip: 'Initial Boardless commit' already exists on dev.")
 
 if __name__ == "__main__":
     main()
