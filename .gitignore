@@ -1,35 +1,16 @@
 # All IDEs 
-simplicity_sdk_*/
-*.pintool
-*.slps
-config/*
-!config/zcl
-!config/btconf
-!config/rail
-autogen/
+!.gitmodules
 
 # Simplicity IDE Gitignore
-.pdm/
-.project
-.cproject
-.projectlinkstore
-.settings
 
 GNU ARM v12.2.1 - Debug/
 GNU ARM v12.2.1 - Default/
 
 # Vscode Project Gitignore
-.vscode/
-*_cmake/
-vscode.conf
 
 #IAR Project Gitignore
-*.ewp
-*.eww
-*.ewd
-*.ewt
-*.ipcf
-*.custom_argvars
 settings/
 Default/
 ewarm-IAR
+
+# Any other pattern goes here
