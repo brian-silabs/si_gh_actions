@@ -37,10 +37,12 @@ jobs:
           echo "SLC_CLI_ABS_DIR=${{ env.TOOLS_ABS_DIR }}/slc_cli" >> $GITHUB_ENV
           echo "COMMANDER_REL_DIR=${{ env.TOOLS_REL_DIR }}/commander" >> $GITHUB_ENV
           echo "COMMANDER_ABS_DIR=${{ env.TOOLS_ABS_DIR }}/commander" >> $GITHUB_ENV
-          echo "POST_BUILD_ARTIFACTS_REL_OUT_FILE=${{ env.SOLUTION_REL_DIR }}/postbuild-artifacts.zip" >> $GITHUB_ENV
-          echo "POST_BUILD_ARTIFACTS_ABS_OUT_FILE=${{ env.SOLUTION_ABS_DIR }}/postbuild-artifacts.zip" >> $GITHUB_ENV
-          echo "POST_BUILD_ARTIFACTS_REL_DIR=${{ env.SOLUTION_REL_DIR }}/artifact" >> $GITHUB_ENV
-          echo "POST_BUILD_ARTIFACTS_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/artifact" >> $GITHUB_ENV
+          echo "POST_BUILD_EXE=${{ env.TOOLS_ABS_DIR }}/commander/commander" >> $GITHUB_ENV
+          # TODO review below, as we will now upload zipped artifacts, per config
+          # echo "POST_BUILD_ARTIFACTS_REL_OUT_FILE=${{ env.SOLUTION_REL_DIR }}/postbuild-artifacts.zip" >> $GITHUB_ENV
+          # echo "POST_BUILD_ARTIFACTS_ABS_OUT_FILE=${{ env.SOLUTION_ABS_DIR }}/postbuild-artifacts.zip" >> $GITHUB_ENV
+          echo "POST_BUILD_ARTIFACTS_REL_DIR=${{ env.SOLUTION_REL_DIR }}/artifacts" >> $GITHUB_ENV
+          echo "POST_BUILD_ARTIFACTS_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/artifacts" >> $GITHUB_ENV
 
       - name: Export all tools to PATH
         run: |
@@ -112,8 +114,28 @@ jobs:
           echo "SDK_VERSION=${{ (fromJson(steps.read_slcp.outputs.data).sdk).version }}" >> $GITHUB_ENV
           echo "PROJECT_NAME=${{ fromJson(steps.read_slcp.outputs.data).project_name }}" >> $GITHUB_ENV
           echo "CMAKE_WORKING_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/${{ fromJson(steps.read_slcp.outputs.data).project_name }}_cmake" >> $GITHUB_ENV
-          echo "BINARIES_OUTPUT_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/${{ fromJson(steps.read_slcp.outputs.data).project_name }}_cmake/build/default_config" >> $GITHUB_ENV
+          #echo "BINARIES_OUTPUT_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/${{ fromJson(steps.read_slcp.outputs.data).project_name }}_cmake/build/default_config" >> $GITHUB_ENV
           echo "ARM_GCC_VERSION=${{ fromJson(steps.read_toolchain.outputs.data)[format('{0}', (fromJson(steps.read_slcp.outputs.data).sdk).id )][format('v{0}', (fromJson(steps.read_slcp.outputs.data).sdk).version )].gcc }}" >> $GITHUB_ENV
+
+      - name: Detect ZAP config
+        id: zap
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(config/zcl/*.zap)
+          if [ ${#files[@]} -gt 0 ]; then
+            # pick the first .zap; tweak if you prefer newest: files=( $(ls -t config/zcl/*.zap) )
+            ZAP_FILE="${files[0]}"
+            echo "found=true"        >> "$GITHUB_OUTPUT"
+            echo "zap_file=$ZAP_FILE" >> "$GITHUB_OUTPUT"
+            # a stable cache key: hash the zap file content
+            echo "zap_hash=$(sha256sum "$ZAP_FILE" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+            echo "Found ZAP: $ZAP_FILE"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No ZAP file under config/zcl/. Will skip ZAP download/build."
+          fi
 
       # Download Simplicity SDK
       - name: Checkout SiSDK 
@@ -164,7 +186,8 @@ jobs:
         id: zap_latest  # The step ID to refer to later.
 
       # Download ZAP Tool for Zigbee projects
-      - name: Checkout ZAP Tool 
+      - name: Checkout ZAP Tool
+        if: steps.zap.outputs.found == 'true'
         uses: actions/checkout@v4
         with:
           repository: project-chip/zap
@@ -174,6 +197,7 @@ jobs:
 
       # Build ZAP
       - name: Setup Node # Not sure if this is required
+        if: steps.zap.outputs.found == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "18"
@@ -182,6 +206,7 @@ jobs:
 
       # Install ZAP - TODO check certificate issue
       - name: Build and install ZAP (Unsecure NODE_TLS_REJECT_UNAUTHORIZED = 0)
+        if: steps.zap.outputs.found == 'true'
         working-directory: ${{ env.ZAP_REL_DIR }}
         env:
           NODE_TLS_REJECT_UNAUTHORIZED: 0
@@ -204,39 +229,141 @@ jobs:
         with:
           from-file: ${{ env.SOLUTION_REL_DIR }}/target_info.yaml
 
-      # Export targets information
+      # # Export targets information
+      # - name: Update env vars with Project SLCP extracted data
+      #   run: |
+      #     echo "TARGET_OPN=${{ (fromJson(steps.read_build_configs.outputs.data).targets[0]).target_opn }}" >> $GITHUB_ENV
+      #     echo "TARGET_CONFIGS=${{ (fromJson(steps.read_build_configs.outputs.data).targets[0]).configs }}" >> $GITHUB_ENV
+
+      # Export targets information (supports empty target_info.yaml)
       - name: Update env vars with Project SLCP extracted data
+        id: export_targets
+        shell: bash
         run: |
-          echo "TARGET_OPN=${{ (fromJson(steps.read_build_configs.outputs.data).targets[0]).target_opn }}" >> $GITHUB_ENV
-          echo "TARGET_CONFIGS=${{ (fromJson(steps.read_build_configs.outputs.data).targets[0]).configs }}" >> $GITHUB_ENV
-        
-      # Generate Project for CI build - TODO change target board for matrix builds based on configuration file
-      - name: SLC Generate Project for local build
-        run: |
-          cd ${{ env.SOLUTION_ABS_DIR }}
-          slc generate ${{ env.SLCP_FILENAME }} -cpsdk -tlcn gcc -o cmake --with ${{ env.TARGET_OPN }} --configuration=${{ env.TARGET_CONFIGS }}
+          set -euo pipefail
 
-      # Build Project
-      - name: Build Project
-        run: |
-          cd ${{ env.CMAKE_WORKING_ABS_DIR }}
-          cmake --workflow --preset project --fresh
+          # Read the JSON produced earlier by your 'read_build_configs' step.
+          # Expecting shape: { "targets": [ { "target_opn": "...", "configs": "...", "name": "..." }, ... ] }
+          RAW='${{ steps.read_build_configs.outputs.data }}'
 
-      # Create size report
-      - name: Create size report
-        run: |
-          arm-none-eabi-size ${{ env.BINARIES_OUTPUT_ABS_DIR }}/${{ env.PROJECT_NAME }}.out -A >> ${{ env.PROJECT_NAME }}_SizeReport.log
+          # If the config step produced nothing or empty, fall back to empty list
+          if [ -z "$RAW" ] || [ "$RAW" = "null" ]; then
+            echo "No targets JSON. Proceeding with default-only build."
+            echo "TARGET_COUNT=0" >> "$GITHUB_ENV"
+            exit 0
+          fi
 
-      # Add slpb artifacts to Release - If applicable, I do not like using artifact and would have preferred using the paths from slpb instead
-      - name: Looking for postbuild artifacts and zipping them if present 
-        if: ${{ hashFiles(format('{0}/{1}.slpb', env.SOLUTION_ABS_DIR, env.PROJECT_NAME)) != '' }}
-        run: |
-          zip -q -r ${{ env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE }} ${{ env.POST_BUILD_ARTIFACTS_ABS_DIR }}
+          python3 - << 'PY'
+          import json, os, re
+          raw = json.loads(r'''${{ steps.read_build_configs.outputs.data }}''')
+          targets = (raw.get("targets") or []) if isinstance(raw, dict) else []
+          # sanitize names for folder usage
+          def slug(s):
+              s = (s or "t").strip()
+              s = re.sub(r'[^A-Za-z0-9._-]+','_', s)
+              return s or "t"
+          print(f"Found {len(targets)} targets")
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"TARGET_COUNT={len(targets)}\n")
+              for i,t in enumerate(targets):
+                  name = slug(t.get("name") or t.get("target_opn") or f"t{i}")
+                  opn  = (t.get("target_opn") or "").strip()
+                  cfg  = (t.get("configs") or "").strip()
+                  f.write(f"TARGET_{i}_NAME={name}\n")
+                  f.write(f"TARGET_{i}_OPN={opn}\n")
+                  f.write(f"TARGET_{i}_CONFIGS={cfg}\n")
+          PY
 
-  # build_artifacts:
-  #   needs: download_optional_tools
-  #   runs-on: ubuntu-latest
-  #   steps:
+
+      # # Generate Project for CI build - TODO change target board for matrix builds based on configuration file
+      # - name: SLC Generate Project for local build
+      #   run: |
+      #     cd ${{ env.SOLUTION_ABS_DIR }}
+      #     slc generate ${{ env.SLCP_FILENAME }} -cpsdk -tlcn gcc -o cmake --with ${{ env.TARGET_OPN }} --configuration=${{ env.TARGET_CONFIGS }}
+
+      # Generate projects:
+      # - default (NO --with / --configuration) → ${PROJECT_NAME}_default
+      # - each target in target_info.yaml      → ${PROJECT_NAME}_${TARGET_<i>_NAME}
+      - name: SLC Generate & Build Project(s)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          trap 'echo "❌ Failed at ${BASH_SOURCE[0]}:${LINENO}"' ERR
+
+          : "${PROJECT_NAME:?PROJECT_NAME must be set}"
+          : "${{ env.SOLUTION_ABS_DIR }}"; : "${{ env.SLCP_FILENAME }}"
+
+          # Common vars and directories
+          SOL_ABS_DIR_CMAKE="${{ env.SOLUTION_ABS_DIR }}/${PROJECT_NAME}_cmake"
+          mkdir -p "${{env.POST_BUILD_ARTIFACTS_ABS_DIR}}"
+
+          # 1) Default project (no --with / --configuration)
+          DEFAULT_PROJECT_ARTIFACTS_ABS_DIR="${{ env.SOLUTION_ABS_DIR }}/${PROJECT_NAME}_default_artifacts"
+          DEFAULT_PROJECT_ARTIFACTS_ABS_FILE_DEST="${{ env.POST_BUILD_ARTIFACTS_ABS_DIR }}/${PROJECT_NAME}_default_artifacts.zip"
+          echo "Generating DEFAULT build config Artifacts into: ${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
+          mkdir -p "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
+          pushd "${{ env.SOLUTION_ABS_DIR }}" >/dev/null
+            # Delete existing cmake directory if any
+            rm -rf "${SOL_ABS_DIR_CMAKE}"
+            # Generate new cmake files
+            slc generate "${{ env.SLCP_FILENAME }}" -cpsdk -tlcn gcc -o cmake
+            echo "=== Building ${PROJECT_NAME}_default ==="
+            pushd "${SOL_ABS_DIR_CMAKE}" >/dev/null
+              # Build the project
+              cmake --workflow --preset project --fresh
+              # Create size report
+              arm-none-eabi-size "${SOL_ABS_DIR_CMAKE}/build/default_config/${{ env.PROJECT_NAME }}.out" -A >> "${SOL_ABS_DIR_CMAKE}/build/default_config/${{ env.PROJECT_NAME }}_SizeReport.log"
+              # Copy artifacts into the project's artifacts directory
+              cp -a "${SOL_ABS_DIR_CMAKE}/build/default_config/." "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
+              # Zip artifacts for release upload
+              zip -q -r "${DEFAULT_PROJECT_ARTIFACTS_ABS_FILE_DEST}" "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
+            popd >/dev/null
+          popd >/dev/null
+
+          # 2) Extra targets from target_info.yaml (if any)
+          CNT="${TARGET_COUNT:-0}"
+          if [ "$CNT" -gt 0 ]; then
+            for ((i=0;i<CNT;i++)); do
+              name_var="TARGET_${i}_NAME"
+              opn_var="TARGET_${i}_OPN"
+              cfg_var="TARGET_${i}_CONFIGS"
+
+              NAME="${!name_var-}"   # may be empty
+              OPN="${!opn_var-}"     # may be empty
+              CFG="${!cfg_var-}"     # may be empty
+
+              PROJECT_CONFIG_ABS_OUT_DIR="${SOL_ABS_DIR}/${PROJECT_NAME}_${NAME}"
+              echo "Generating TARGET ${i}: name=${NAME:-<none>} opn=${OPN:-<none>} cfg=${CFG:-<none>} → ${PROJECT_CONFIG_ABS_OUT_DIR}"
+              mkdir -p "${PROJECT_CONFIG_ABS_OUT_DIR}"
+
+              # Build slc args conditionally so we don't pass empty flags
+              SLC_ARGS=( generate "${SLCP}" -cpsdk -tlcn gcc -o cmake -d "${PROJECT_CONFIG_ABS_OUT_DIR}" )
+              if [ -n "${OPN}" ]; then
+                SLC_ARGS+=( --with "${OPN}" )
+              fi
+              if [ -n "${CFG}" ]; then
+                SLC_ARGS+=( --configuration "${CFG}" )
+              fi
+
+              pushd "${SOL_ABS_DIR}" >/dev/null
+                slc "${SLC_ARGS[@]}"
+                echo "=== Building ${PROJECT_NAME}_${NAME} ==="
+                pushd "${PROJECT_CONFIG_ABS_OUT_DIR}" >/dev/null
+                  cmake --workflow --preset project --fresh
+                popd >/dev/null
+              popd >/dev/null
+            done
+          else
+            echo "No extra targets. Only default will be built."
+          fi
+
+      # TODO regression, as expected projects now can have an slpb with no artifacts folder. Needs rework
+      # Will prevent bootloader builds
+      # # Add slpb artifacts to Release - If applicable, I do not like using artifact and would have preferred using the paths from slpb instead
+      # - name: Looking for postbuild artifacts and zipping them if present 
+      #   if: ${{ hashFiles(format('{0}/{1}.slpb', env.SOLUTION_ABS_DIR, env.PROJECT_NAME)) != '' }}
+      #   run: |
+      #     zip -q -r ${{ env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE }} ${{ env.POST_BUILD_ARTIFACTS_ABS_DIR }}
 
       - name: Create Release Draft
         uses: release-drafter/release-drafter@v6
@@ -249,25 +376,24 @@ jobs:
           name: ${{ env.PROJECT_NAME }} v${{ env.RELEASE_VERSION }}
       
       - name: Upload Assets
-        uses: shogo82148/actions-upload-release-asset@v1
+        uses: shogo82148/actions-upload-release-asset@v1.8.2
         with:
           github_token: ${{ secrets.ACCESS_TOKEN }}
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           overwrite: true
           asset_path: | 
-            ${{ env.BINARIES_OUTPUT_ABS_DIR }}/${{ env.PROJECT_NAME }}.*
-            ${{ github.workspace }}/${{ env.PROJECT_NAME }}_SizeReport.log
+            ${{ env.POST_BUILD_ARTIFACTS_ABS_DIR }}/*.zip
 
-      # Add slpb artifacts to Release - If applicable, I do not like using artifact and would have preferred using the paths from slpb instead
-      - name: Upload postbuild artifacts if present
-        if: ${{ hashFiles(env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE) != '' }}
-        uses: shogo82148/actions-upload-release-asset@v1
-        with:
-          github_token: ${{ secrets.ACCESS_TOKEN }}
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          overwrite: true
-          asset_path: | 
-            ${{ env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE }}
+      # # Add slpb artifacts to Release - If applicable, I do not like using artifact and would have preferred using the paths from slpb instead
+      # - name: Upload postbuild artifacts if present
+      #   if: ${{ hashFiles(env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE) != '' }}
+      #   uses: shogo82148/actions-upload-release-asset@v1.8.2
+      #   with:
+      #     github_token: ${{ secrets.ACCESS_TOKEN }}
+      #     upload_url: ${{ steps.create_release.outputs.upload_url }}
+      #     overwrite: true
+      #     asset_path: | 
+      #       ${{ env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE }}
 
   # update_changelog:
   #   name: Update Changelog
