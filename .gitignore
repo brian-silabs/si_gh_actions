@@ -1,6 +1,9 @@
 # All IDEs 
 !.gitmodules
 
+# Darwin specific
+.DS_Store
+
 # Simplicity IDE Gitignore
 
 GNU ARM v12.2.1 - Debug/

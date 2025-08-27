@@ -38,9 +38,6 @@ jobs:
           echo "COMMANDER_REL_DIR=${{ env.TOOLS_REL_DIR }}/commander" >> $GITHUB_ENV
           echo "COMMANDER_ABS_DIR=${{ env.TOOLS_ABS_DIR }}/commander" >> $GITHUB_ENV
           echo "POST_BUILD_EXE=${{ env.TOOLS_ABS_DIR }}/commander/commander" >> $GITHUB_ENV
-          # TODO review below, as we will now upload zipped artifacts, per config
-          # echo "POST_BUILD_ARTIFACTS_REL_OUT_FILE=${{ env.SOLUTION_REL_DIR }}/postbuild-artifacts.zip" >> $GITHUB_ENV
-          # echo "POST_BUILD_ARTIFACTS_ABS_OUT_FILE=${{ env.SOLUTION_ABS_DIR }}/postbuild-artifacts.zip" >> $GITHUB_ENV
           echo "POST_BUILD_ARTIFACTS_REL_DIR=${{ env.SOLUTION_REL_DIR }}/artifacts" >> $GITHUB_ENV
           echo "POST_BUILD_ARTIFACTS_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/artifacts" >> $GITHUB_ENV
 
@@ -114,7 +111,6 @@ jobs:
           echo "SDK_VERSION=${{ (fromJson(steps.read_slcp.outputs.data).sdk).version }}" >> $GITHUB_ENV
           echo "PROJECT_NAME=${{ fromJson(steps.read_slcp.outputs.data).project_name }}" >> $GITHUB_ENV
           echo "CMAKE_WORKING_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/${{ fromJson(steps.read_slcp.outputs.data).project_name }}_cmake" >> $GITHUB_ENV
-          #echo "BINARIES_OUTPUT_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/${{ fromJson(steps.read_slcp.outputs.data).project_name }}_cmake/build/default_config" >> $GITHUB_ENV
           echo "ARM_GCC_VERSION=${{ fromJson(steps.read_toolchain.outputs.data)[format('{0}', (fromJson(steps.read_slcp.outputs.data).sdk).id )][format('v{0}', (fromJson(steps.read_slcp.outputs.data).sdk).version )].gcc }}" >> $GITHUB_ENV
 
       - name: Detect ZAP config
@@ -172,11 +168,7 @@ jobs:
           curl -Lo gcc-arm-none-eabi.tar.xz "https://developer.arm.com/-/media/Files/downloads/gnu/${{ env.ARM_GCC_VERSION }}/binrel/arm-gnu-toolchain-${{ env.ARM_GCC_VERSION }}-${{ env.RUNNER_ARCHITECTURE }}-arm-none-eabi.tar.xz"
           tar xf gcc-arm-none-eabi.tar.xz --strip-components=1 -C ${{ env.ARM_GCC_ABS_DIR }}
 
-  # download_optional_tools:
-  #   if: github.repository == 'octo-org/octo-repo-prod'
-  #   needs: prepare_build_environment
-  #   runs-on: ubuntu-latest
-  #   steps:
+
       - name: Get Latest Zap Version
         uses: oprypin/find-latest-tag@v1
         with:
@@ -213,10 +205,6 @@ jobs:
         run: |
           npm install
 
-  # build_artifacts:
-  #   needs: download_optional_tools
-  #   runs-on: ubuntu-latest
-  #   steps:
       - name: SLC Configure SDK Trust and Toolchain
         run: |
           slc configuration -gcc ${{ env.ARM_GCC_ABS_DIR }} --sdk ${{ env.SDK_ABS_DIR }}
@@ -228,12 +216,6 @@ jobs:
         uses: teunmooij/yaml@v1
         with:
           from-file: ${{ env.SOLUTION_REL_DIR }}/target_info.yaml
-
-      # # Export targets information
-      # - name: Update env vars with Project SLCP extracted data
-      #   run: |
-      #     echo "TARGET_OPN=${{ (fromJson(steps.read_build_configs.outputs.data).targets[0]).target_opn }}" >> $GITHUB_ENV
-      #     echo "TARGET_CONFIGS=${{ (fromJson(steps.read_build_configs.outputs.data).targets[0]).configs }}" >> $GITHUB_ENV
 
       # Export targets information (supports empty target_info.yaml)
       - name: Update env vars with Project SLCP extracted data
@@ -274,12 +256,58 @@ jobs:
                   f.write(f"TARGET_{i}_CONFIGS={cfg}\n")
           PY
 
+      # Discover SLPB artifact directories - if any
+      - name: Discover SLPB artifact directories
+        id: slpb
+        shell: bash
+        run: |
+          set -euo pipefail
+          SLPB="${{ env.SOLUTION_ABS_DIR }}/${{ env.PROJECT_NAME }}.slpb"
+          if [ ! -f "$SLPB" ]; then
+            echo "slpb_dirs_count=0" >> "$GITHUB_OUTPUT"
+            echo "slpb_dirs_json=[]" >> "$GITHUB_OUTPUT"
+            # still set env var (empty) so later steps can handle gracefully
+            echo "SLPB_DIRS=" >> "$GITHUB_ENV"
+            echo "No SLPB file found at: $SLPB"
+            exit 0
+          fi
 
-      # # Generate Project for CI build - TODO change target board for matrix builds based on configuration file
-      # - name: SLC Generate Project for local build
-      #   run: |
-      #     cd ${{ env.SOLUTION_ABS_DIR }}
-      #     slc generate ${{ env.SLCP_FILENAME }} -cpsdk -tlcn gcc -o cmake --with ${{ env.TARGET_OPN }} --configuration=${{ env.TARGET_CONFIGS }}
+          python3 - << 'PY'
+          import os, sys, json
+          try:
+              import yaml
+          except ImportError:
+              import subprocess
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml"])
+              import yaml
+
+          slpb = os.environ["SLPB"]
+          with open(slpb, "r", encoding="utf-8") as f:
+              data = yaml.safe_load(f) or {}
+
+          dirs = []
+          for step in (data.get("steps") or []):
+              out = step.get("output")
+              if not out or not isinstance(out, str):
+                  continue
+              # We only need the parent directory of the output path (template vars don't affect the parent)
+              parent = os.path.dirname(out.strip())
+              if parent and parent not in dirs:
+                  dirs.append(parent)
+
+          # Write outputs/env
+          gh_out = os.environ["GITHUB_OUTPUT"]
+          with open(gh_out, "a", encoding="utf-8") as fo:
+              fo.write(f"slpb_dirs_count={len(dirs)}\n")
+              fo.write("slpb_dirs_json=" + json.dumps(dirs) + "\n")
+
+          # newline-separated for easy bash loops later
+          gh_env = os.environ["GITHUB_ENV"]
+          with open(gh_env, "a", encoding="utf-8") as fe:
+              fe.write("SLPB_DIRS=" + "\\n".join(dirs) + "\n")
+          PY
+
+          echo "Discovered ${{ steps.slpb.outputs.slpb_dirs_count || 0 }} SLPB artifact parent folder(s)."
 
       # Generate projects:
       # - default (NO --with / --configuration) → ${PROJECT_NAME}_default
@@ -315,6 +343,29 @@ jobs:
               arm-none-eabi-size "${SOL_ABS_DIR_CMAKE}/build/default_config/${{ env.PROJECT_NAME }}.out" -A >> "${SOL_ABS_DIR_CMAKE}/build/default_config/${{ env.PROJECT_NAME }}_SizeReport.log"
               # Copy artifacts into the project's artifacts directory
               cp -a "${SOL_ABS_DIR_CMAKE}/build/default_config/." "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
+
+              # Also copy any SLPB-declared artifact parent folders, if they exist
+              if [ -n "${SLPB_DIRS:-}" ]; then
+                # iterate newline-separated list
+                while IFS= read -r rel; do
+                  [ -z "$rel" ] && continue
+                  SRC="${SOL_ABS_DIR_CMAKE}/${rel}"
+                  DST="${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}/${rel}"
+                  if [ -d "$SRC" ] || [ -f "$SRC" ]; then
+                    mkdir -p "$(dirname "$DST")"
+                    # copy directories recursively, or single files if the folder isn't a dir
+                    if [ -d "$SRC" ]; then
+                      cp -a "$SRC/." "$DST"
+                    else
+                      cp -a "$SRC" "$DST"
+                    fi
+                    echo "Copied SLPB artifact source: $SRC -> $DST"
+                  else
+                    echo "Note: SLPB path not found (skipped): $SRC"
+                  fi
+                done <<< "$SLPB_DIRS"
+              fi
+
               # Zip artifacts for release upload
               zip -q -r "${DEFAULT_PROJECT_ARTIFACTS_ABS_FILE_DEST}" "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
             popd >/dev/null
@@ -357,13 +408,6 @@ jobs:
             echo "No extra targets. Only default will be built."
           fi
 
-      # TODO regression, as expected projects now can have an slpb with no artifacts folder. Needs rework
-      # Will prevent bootloader builds
-      # # Add slpb artifacts to Release - If applicable, I do not like using artifact and would have preferred using the paths from slpb instead
-      # - name: Looking for postbuild artifacts and zipping them if present 
-      #   if: ${{ hashFiles(format('{0}/{1}.slpb', env.SOLUTION_ABS_DIR, env.PROJECT_NAME)) != '' }}
-      #   run: |
-      #     zip -q -r ${{ env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE }} ${{ env.POST_BUILD_ARTIFACTS_ABS_DIR }}
 
       - name: Create Release Draft
         uses: release-drafter/release-drafter@v6
