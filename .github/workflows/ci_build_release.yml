@@ -62,7 +62,7 @@ jobs:
       - name: Prepare build envirnoment 
         run: |
           sudo apt update
-          sudo apt -qq install -y git curl zip unzip wget gpg python3 python3-pip cmake make ninja-build ca-certificates openssl libgl1 libglib2.0-0
+          sudo apt -qq install -y git curl zip unzip wget gpg python3 python3-pip python3-yaml yq cmake make ninja-build ca-certificates openssl libgl1 libglib2.0-0
           sudo apt update
           wget -qO- https://apt.corretto.aws/corretto.key | sudo gpg --dearmor -o /usr/share/keyrings/corretto-keyring.gpg && echo "deb [signed-by=/usr/share/keyrings/corretto-keyring.gpg] https://apt.corretto.aws stable main" | sudo tee /etc/apt/sources.list.d/corretto.list
           sudo apt update
@@ -83,6 +83,9 @@ jobs:
           echo "SLCP_ABS_PATH=$(find ${{ env.SOLUTION_ABS_DIR }} -type f -name "*.slcp")" >> $GITHUB_ENV
           echo "SLCP_REL_PATH=$(find ${{ env.SOLUTION_REL_DIR }} -type f -name "*.slcp")" >> $GITHUB_ENV
           echo "SLCP_FILENAME=$(find ${{ env.SOLUTION_ABS_DIR }} -name "*.slcp" -type f -printf "%f\n")" >> $GITHUB_ENV
+          echo "SLPB_ABS_PATH=$(find ${{ env.SOLUTION_ABS_DIR }} -type f -name "*.slpb")" >> $GITHUB_ENV
+          echo "SLPB_REL_PATH=$(find ${{ env.SOLUTION_REL_DIR }} -type f -name "*.slpb")" >> $GITHUB_ENV
+          echo "SLPB_FILENAME=$(find ${{ env.SOLUTION_ABS_DIR }} -name "*.slpb" -type f -printf "%f\n")" >> $GITHUB_ENV
           echo "RELEASE_VERSION=$(cat ${{ env.SOLUTION_ABS_DIR }}/VERSION.md)" >> $GITHUB_ENV
           cd ${{ env.SOLUTION_ABS_DIR }}
           echo "RELEASE_SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
@@ -94,6 +97,13 @@ jobs:
         uses: teunmooij/yaml@v1
         with:
           from-file: ${{ env.SLCP_REL_PATH }} # Requires relative path
+
+      # Read the SLPB contents
+      - name: Read SLPB contents
+        id: read_slpb
+        uses: teunmooij/yaml@v1
+        with:
+          from-file: ${{ env.SLPB_REL_PATH }} # Requires relative path
 
       # Read the Toolchain dependencies contents
       - name: Read Toolchain dependencies contents
@@ -256,58 +266,89 @@ jobs:
                   f.write(f"TARGET_{i}_CONFIGS={cfg}\n")
           PY
 
-      # Discover SLPB artifact directories - if any
-      - name: Discover SLPB artifact directories
+      # Parse steps[].output → parent dirs (Bash + yq)
+      - name: Parse SLPB to get output parent dirs
         id: slpb
         shell: bash
         run: |
-          set -euo pipefail
-          SLPB="${{ env.SOLUTION_ABS_DIR }}/${{ env.PROJECT_NAME }}.slpb"
-          if [ ! -f "$SLPB" ]; then
-            echo "slpb_dirs_count=0" >> "$GITHUB_OUTPUT"
-            echo "slpb_dirs_json=[]" >> "$GITHUB_OUTPUT"
-            # still set env var (empty) so later steps can handle gracefully
-            echo "SLPB_DIRS=" >> "$GITHUB_ENV"
-            echo "No SLPB file found at: $SLPB"
+          set -Eeuo pipefail
+          trap 'echo "❌ Failed at ${BASH_SOURCE[0]}:${LINENO}"' ERR
+
+          slpb="${SLPB_ABS_PATH:-}"
+          if [[ -z "$slpb" || ! -r "$slpb" ]]; then
+            [[ -n "${GITHUB_OUTPUT:-}" ]] && {
+              echo "slpb_dirs_count=0" >> "$GITHUB_OUTPUT"
+              echo "slpb_dirs_json=[]" >> "$GITHUB_OUTPUT"
+            }
+            [[ -n "${GITHUB_ENV:-}" ]] && echo "SLPB_DIRS=" >> "$GITHUB_ENV"
+            echo "::notice title=SLPB::No readable SLPB at: ${slpb:-<unset>}"
             exit 0
           fi
 
-          python3 - << 'PY'
-          import os, sys, json
-          try:
-              import yaml
-          except ImportError:
-              import subprocess
-              subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml"])
-              import yaml
+          # Ensure yq is available (lightweight)
+          if ! command -v yq >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y yq
+          fi
 
-          slpb = os.environ["SLPB"]
-          with open(slpb, "r", encoding="utf-8") as f:
-              data = yaml.safe_load(f) or {}
+          # Get steps[].output values, then uniqued parent dirs
+          mapfile -t outputs < <(yq -r '.steps[]? | select(has("output")) | .output' "$slpb" | sed 's/\r$//')
 
-          dirs = []
-          for step in (data.get("steps") or []):
-              out = step.get("output")
-              if not out or not isinstance(out, str):
-                  continue
-              # We only need the parent directory of the output path (template vars don't affect the parent)
-              parent = os.path.dirname(out.strip())
-              if parent and parent not in dirs:
-                  dirs.append(parent)
+          declare -A seen=()
+          dirs=()
+          for out in "${outputs[@]}"; do
+            [[ -n "${out// }" ]] || continue
+            parent="$(dirname -- "$out")"
+            [[ -n "$parent" ]] || continue
+            if [[ -z "${seen[$parent]:-}" ]]; then
+              seen["$parent"]=1
+              dirs+=("$parent")
+            fi
+          done
 
-          # Write outputs/env
-          gh_out = os.environ["GITHUB_OUTPUT"]
-          with open(gh_out, "a", encoding="utf-8") as fo:
-              fo.write(f"slpb_dirs_count={len(dirs)}\n")
-              fo.write("slpb_dirs_json=" + json.dumps(dirs) + "\n")
+          # Build a tiny JSON array (no Python)
+          json='['
+          for i in "${!dirs[@]}"; do
+            d="${dirs[$i]}"
+            d=${d//\\/\\\\}; d=${d//\"/\\\"}
+            [[ $i -gt 0 ]] && json+=','
+            json+="\"$d\""
+          done
+          json+=']'
+          count="${#dirs[@]}"
 
-          # newline-separated for easy bash loops later
-          gh_env = os.environ["GITHUB_ENV"]
-          with open(gh_env, "a", encoding="utf-8") as fe:
-              fe.write("SLPB_DIRS=" + "\\n".join(dirs) + "\n")
-          PY
+          # Step outputs (for later steps): count + JSON
+          if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+            {
+              echo "slpb_dirs_count=$count"
+              echo "slpb_dirs_json=$json"
+            } >> "$GITHUB_OUTPUT"
+          fi
 
-          echo "Discovered ${{ steps.slpb.outputs.slpb_dirs_count || 0 }} SLPB artifact parent folder(s)."
+          # Newline-separated env var for easy looping
+          if [[ -n "${GITHUB_ENV:-}" ]]; then
+            if (( count > 0 )); then
+              {
+                echo "SLPB_DIRS<<EOF"
+                printf '%s\n' "${dirs[@]}"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+            else
+              echo "SLPB_DIRS=" >> "$GITHUB_ENV"
+            fi
+          fi
+
+          echo "::notice title=SLPB::Found ${count} artifact parent director$([[ $count == 1 ]] && echo 'y' || echo 'ies')"
+
+      - name: Use SLPB dirs
+        shell: bash
+        run: |
+          echo "Count: ${{ steps.slpb.outputs.slpb_dirs_count }}"
+          echo "JSON : ${{ steps.slpb.outputs.slpb_dirs_json }}"
+          echo "List :"
+          while IFS= read -r d; do
+            [[ -n "$d" ]] && echo " - $d"
+          done <<< "${SLPB_DIRS:-}"
 
       # Generate projects:
       # - default (NO --with / --configuration) → ${PROJECT_NAME}_default
@@ -319,52 +360,56 @@ jobs:
           trap 'echo "❌ Failed at ${BASH_SOURCE[0]}:${LINENO}"' ERR
 
           : "${PROJECT_NAME:?PROJECT_NAME must be set}"
-          : "${{ env.SOLUTION_ABS_DIR }}"; : "${{ env.SLCP_FILENAME }}"
+          : "${SOLUTION_ABS_DIR:?}"; : "${SLCP_FILENAME:?}"
+          : "${POST_BUILD_ARTIFACTS_ABS_DIR:?}"
 
           # Common vars and directories
-          SOL_ABS_DIR_CMAKE="${{ env.SOLUTION_ABS_DIR }}/${PROJECT_NAME}_cmake"
-          mkdir -p "${{env.POST_BUILD_ARTIFACTS_ABS_DIR}}"
+          SOL_ABS_DIR_CMAKE="${SOLUTION_ABS_DIR}/${PROJECT_NAME}_cmake"
+          mkdir -p "${POST_BUILD_ARTIFACTS_ABS_DIR}"
+
+          # --- helper: copy SLPB dirs from a base into a dest root, preserving relative structure
+          copy_slpb_dirs() {
+            local src_base="$1" dest_root="$2" tag="$3"
+            [[ -z "${SLPB_DIRS:-}" ]] && return 0
+            while IFS= read -r rel; do
+              [[ -z "$rel" ]] && continue
+              local src="${src_base}/${rel}"
+              local dst="${dest_root}/${rel}"
+              if [[ -d "$src" || -f "$src" ]]; then
+                mkdir -p "$(dirname "$dst")"
+                if [[ -d "$src" ]]; then
+                  cp -a "$src/." "$dst"
+                else
+                  cp -a "$src" "$dst"
+                fi
+                echo "[$tag] Copied SLPB: $src -> $dst"
+              else
+                echo "[$tag] Note: SLPB path not found (skipped): $src"
+              fi
+            done <<< "${SLPB_DIRS}"
+          }
 
           # 1) Default project (no --with / --configuration)
-          DEFAULT_PROJECT_ARTIFACTS_ABS_DIR="${{ env.SOLUTION_ABS_DIR }}/${PROJECT_NAME}_default_artifacts"
-          DEFAULT_PROJECT_ARTIFACTS_ABS_FILE_DEST="${{ env.POST_BUILD_ARTIFACTS_ABS_DIR }}/${PROJECT_NAME}_default_artifacts.zip"
+          DEFAULT_PROJECT_ARTIFACTS_ABS_DIR="${SOLUTION_ABS_DIR}/${PROJECT_NAME}_default_artifacts"
+          DEFAULT_PROJECT_ARTIFACTS_ABS_FILE_DEST="${POST_BUILD_ARTIFACTS_ABS_DIR}/${PROJECT_NAME}_default_artifacts.zip"
           echo "Generating DEFAULT build config Artifacts into: ${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
           mkdir -p "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
-          pushd "${{ env.SOLUTION_ABS_DIR }}" >/dev/null
+          pushd "${SOLUTION_ABS_DIR}" >/dev/null
             # Delete existing cmake directory if any
             rm -rf "${SOL_ABS_DIR_CMAKE}"
             # Generate new cmake files
-            slc generate "${{ env.SLCP_FILENAME }}" -cpsdk -tlcn gcc -o cmake
+            slc generate "${SLCP_FILENAME}" -cpsdk -tlcn gcc -o cmake
             echo "=== Building ${PROJECT_NAME}_default ==="
             pushd "${SOL_ABS_DIR_CMAKE}" >/dev/null
               # Build the project
               cmake --workflow --preset project --fresh
               # Create size report
-              arm-none-eabi-size "${SOL_ABS_DIR_CMAKE}/build/default_config/${{ env.PROJECT_NAME }}.out" -A >> "${SOL_ABS_DIR_CMAKE}/build/default_config/${{ env.PROJECT_NAME }}_SizeReport.log"
-              # Copy artifacts into the project's artifacts directory
+              arm-none-eabi-size "${SOL_ABS_DIR_CMAKE}/build/default_config/${PROJECT_NAME}.out" -A >> "${SOL_ABS_DIR_CMAKE}/build/default_config/${PROJECT_NAME}_SizeReport.log"
+              # Copy EVERYTHING from the default_config build tree
               cp -a "${SOL_ABS_DIR_CMAKE}/build/default_config/." "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
 
-              # Also copy any SLPB-declared artifact parent folders, if they exist
-              if [ -n "${SLPB_DIRS:-}" ]; then
-                # iterate newline-separated list
-                while IFS= read -r rel; do
-                  [ -z "$rel" ] && continue
-                  SRC="${SOL_ABS_DIR_CMAKE}/${rel}"
-                  DST="${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}/${rel}"
-                  if [ -d "$SRC" ] || [ -f "$SRC" ]; then
-                    mkdir -p "$(dirname "$DST")"
-                    # copy directories recursively, or single files if the folder isn't a dir
-                    if [ -d "$SRC" ]; then
-                      cp -a "$SRC/." "$DST"
-                    else
-                      cp -a "$SRC" "$DST"
-                    fi
-                    echo "Copied SLPB artifact source: $SRC -> $DST"
-                  else
-                    echo "Note: SLPB path not found (skipped): $SRC"
-                  fi
-                done <<< "$SLPB_DIRS"
-              fi
+              # Also copy SLPB dirs into POST_BUILD artifacts for upload
+              copy_slpb_dirs "${SOLUTION_ABS_DIR}" "${POST_BUILD_ARTIFACTS_ABS_DIR}/slpb/default" "default->post-build"
 
               # Zip artifacts for release upload
               zip -q -r "${DEFAULT_PROJECT_ARTIFACTS_ABS_FILE_DEST}" "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
@@ -373,7 +418,7 @@ jobs:
 
           # 2) Extra targets from target_info.yaml (if any)
           CNT="${TARGET_COUNT:-0}"
-          if [ "$CNT" -gt 0 ]; then
+          if [[ "$CNT" -gt 0 ]]; then
             for ((i=0;i<CNT;i++)); do
               name_var="TARGET_${i}_NAME"
               opn_var="TARGET_${i}_OPN"
@@ -383,26 +428,25 @@ jobs:
               OPN="${!opn_var-}"     # may be empty
               CFG="${!cfg_var-}"     # may be empty
 
-              PROJECT_CONFIG_ABS_OUT_DIR="${SOL_ABS_DIR}/${PROJECT_NAME}_${NAME}"
+              PROJECT_CONFIG_ABS_OUT_DIR="${SOLUTION_ABS_DIR}/${PROJECT_NAME}_${NAME}"
               echo "Generating TARGET ${i}: name=${NAME:-<none>} opn=${OPN:-<none>} cfg=${CFG:-<none>} → ${PROJECT_CONFIG_ABS_OUT_DIR}"
               mkdir -p "${PROJECT_CONFIG_ABS_OUT_DIR}"
 
               # Build slc args conditionally so we don't pass empty flags
-              SLC_ARGS=( generate "${SLCP}" -cpsdk -tlcn gcc -o cmake -d "${PROJECT_CONFIG_ABS_OUT_DIR}" )
-              if [ -n "${OPN}" ]; then
-                SLC_ARGS+=( --with "${OPN}" )
-              fi
-              if [ -n "${CFG}" ]; then
-                SLC_ARGS+=( --configuration "${CFG}" )
-              fi
+              SLC_ARGS=( generate "${SLCP_FILENAME}" -cpsdk -tlcn gcc -o cmake -d "${PROJECT_CONFIG_ABS_OUT_DIR}" )
+              [[ -n "${OPN}" ]] && SLC_ARGS+=( --with "${OPN}" )
+              [[ -n "${CFG}" ]] && SLC_ARGS+=( --configuration "${CFG}" )
 
-              pushd "${SOL_ABS_DIR}" >/dev/null
+              pushd "${SOLUTION_ABS_DIR}" >/dev/null
                 slc "${SLC_ARGS[@]}"
                 echo "=== Building ${PROJECT_NAME}_${NAME} ==="
                 pushd "${PROJECT_CONFIG_ABS_OUT_DIR}" >/dev/null
                   cmake --workflow --preset project --fresh
                 popd >/dev/null
               popd >/dev/null
+
+              # Copy SLPB-declared dirs into POST_BUILD artifacts under a namespaced folder
+              copy_slpb_dirs "${SOLUTION_ABS_DIR}" "${POST_BUILD_ARTIFACTS_ABS_DIR}/slpb/${PROJECT_NAME}_${NAME}" "target:${NAME}->post-build"
             done
           else
             echo "No extra targets. Only default will be built."
