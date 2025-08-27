@@ -1,7 +1,9 @@
 from git import Repo, GitCommandError
 import os, shutil, configparser
+import hashlib
 
 # ---------- helpers (add once) ----------
+
 
 def protect_gitmodules():
     """
@@ -15,8 +17,10 @@ def protect_gitmodules():
             f.write(("\n" if not content.endswith("\n") else "") + "!.gitmodules\n")
             print("Added '!.gitmodules' to .gitignore for safety.")
 
+
 def branch_exists(repo, name: str) -> bool:
     return any(h.name == name for h in repo.heads)
+
 
 def ensure_checked_out(repo, name: str):
     if branch_exists(repo, name):
@@ -25,6 +29,7 @@ def ensure_checked_out(repo, name: str):
         # create from current HEAD
         b = repo.create_head(name)
         b.checkout()
+
 
 def has_commit_with_subject(repo, rev: str, subject: str) -> bool:
     """Return True if any commit reachable from `rev` has `subject` as its one-line message."""
@@ -37,6 +42,7 @@ def has_commit_with_subject(repo, rev: str, subject: str) -> bool:
         # rev might not exist yet
         return False
 
+
 def preclean_submodule_git(path="si_gh_actions/.git"):
     """
     Ensure no nested .git directory exists inside the submodule working tree.
@@ -45,6 +51,7 @@ def preclean_submodule_git(path="si_gh_actions/.git"):
     if os.path.isdir(path):
         shutil.rmtree(path)
         print("Removed nested si_gh_actions/.git directory (prevent corruption).")
+
 
 def stage_submodule_and_ci(repo):
     """
@@ -65,11 +72,16 @@ def stage_submodule_and_ci(repo):
         repo.git.add("-f", ".gitignore")
 
     # stage copied CI files
-    to_add = [p for p in ("CHANGELOG.md", "VERSION.md", "target_info.yaml") if os.path.exists(p)]
+    to_add = [
+        p
+        for p in ("CHANGELOG.md", "VERSION.md", "target_info.yaml")
+        if os.path.exists(p)
+    ]
     if to_add:
         repo.index.add(to_add)
     if os.path.isdir(".github"):
         repo.git.add(".github")
+
 
 def assert_gitlink(repo, path="si_gh_actions"):
     """
@@ -79,9 +91,12 @@ def assert_gitlink(repo, path="si_gh_actions"):
         entry = repo.git.ls_files("--stage", path)  # "<mode> <sha> <stage>\tpath"
         mode = entry.split()[0] if entry else ""
         if not mode.startswith("160000"):
-            raise RuntimeError(f"{path} is not staged as a gitlink (mode=160000). Got '{mode or 'none'}'.")
+            raise RuntimeError(
+                f"{path} is not staged as a gitlink (mode=160000). Got '{mode or 'none'}'."
+            )
     except GitCommandError as e:
         raise RuntimeError(f"Cannot verify gitlink for {path}: {e}")
+
 
 def commit_if_needed(repo, message):
     if repo.is_dirty(index=True, working_tree=True, untracked_files=True):
@@ -90,12 +105,14 @@ def commit_if_needed(repo, message):
     else:
         print("No changes to commit.")
 
+
 def has_staged_changes(repo):
     try:
         repo.git.diff("--cached", "--quiet")
         return False  # exit 0 → no changes
     except GitCommandError:
-        return True   # nonzero → staged changes
+        return True  # nonzero → staged changes
+
 
 def commit_if_staged(repo, message):
     if has_staged_changes(repo):
@@ -104,17 +121,11 @@ def commit_if_staged(repo, message):
     else:
         print("No staged changes; skipping commit.")
 
-def copy_files_to_root():
+
+def copy_files_to_root(files_to_copy, dir_to_copy):
     """
     Function to copy files and directories from 'si_gh_actions/' to the root of the current working directory.
     """
-    files_to_copy = [
-        "si_gh_actions/CHANGELOG.md",
-        "si_gh_actions/VERSION.md",
-        "si_gh_actions/.gitignore",
-        "si_gh_actions/target_info.yaml",
-    ]
-    dir_to_copy = "si_gh_actions/.github/"
 
     # Copy individual files
     for file_path in files_to_copy:
@@ -139,7 +150,53 @@ def copy_files_to_root():
     except Exception as e:
         print(f"Error copying directory {dir_to_copy}: {e}")
 
+
+def file_hash(path, chunk_size=8192):
+    """Compute SHA-256 hash of a file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def compare_folders(folder_a, folder_b):
+    """
+    Compare two folders for identical content.
+    Returns True if identical, False otherwise.
+    """
+
+    # Walk both folders and build relative file -> absolute path maps
+    def build_file_map(root):
+        file_map = {}
+        for dirpath, _, filenames in os.walk(root):
+            for name in filenames:
+                rel_path = os.path.relpath(os.path.join(dirpath, name), root)
+                file_map[rel_path] = os.path.join(dirpath, name)
+        return file_map
+
+    files_a = build_file_map(folder_a)
+    files_b = build_file_map(folder_b)
+
+    # Step 1: Compare file sets
+    if set(files_a.keys()) != set(files_b.keys()):
+        return False
+
+    # Step 2: Compare size first, then hash
+    for rel_path in files_a:
+        path_a, path_b = files_a[rel_path], files_b[rel_path]
+
+        if os.path.getsize(path_a) != os.path.getsize(path_b):
+            return False
+
+        if file_hash(path_a) != file_hash(path_b):
+            return False
+
+    return True
+
+
 # ---------- DROP-IN main() ----------
+
 
 def main():
     repo = Repo(".")
@@ -163,7 +220,9 @@ def main():
 
     # --- Only create the Boardful commit if it doesn't already exist on main ---
     if not has_commit_with_subject(repo, "main", "Initial Boardful commit"):
-        stage_submodule_and_ci(repo)      # stages .gitmodules, gitlink, any pre-existing files
+        stage_submodule_and_ci(
+            repo
+        )  # stages .gitmodules, gitlink, any pre-existing files
         assert_gitlink(repo, "si_gh_actions")
         commit_if_staged(repo, "Initial Boardful commit")
     else:
@@ -176,7 +235,16 @@ def main():
     # If you want CI files included in the same Boardful commit, move copy_files_to_root()
     # before stage_submodule_and_ci() above. Otherwise keep this as a separate (idempotent) step.
     if not has_commit_with_subject(repo, "dev", "CI: add workflows and metadata"):
-        copy_files_to_root()
+
+        files_to_copy = [
+            "si_gh_actions/CHANGELOG.md",
+            "si_gh_actions/VERSION.md",
+            "si_gh_actions/.gitignore",
+            "si_gh_actions/target_info.yaml",
+        ]
+        dir_to_copy = "si_gh_actions/.github/"
+
+        copy_files_to_root(files_to_copy, dir_to_copy)
         stage_submodule_and_ci(repo)
         commit_if_staged(repo, "CI: add workflows and metadata")
     else:
@@ -185,11 +253,27 @@ def main():
     # --- Only create the Boardless commit if it doesn't already exist on dev ---
     if not has_commit_with_subject(repo, "dev", "Initial Boardless commit"):
         # Old removal of SLCP contents would go here if needed
-        stage_submodule_and_ci(repo)      # harmless if no changes; keeps .gitmodules/gitlink staged
+        stage_submodule_and_ci(
+            repo
+        )  # harmless if no changes; keeps .gitmodules/gitlink staged
         assert_gitlink(repo, "si_gh_actions")
         commit_if_staged(repo, "Initial Boardless commit")
     else:
         print("Skip: 'Initial Boardless commit' already exists on dev.")
+
+    # --- Compare and update workflows if needed ---
+    # Ensure we are on dev
+    ensure_checked_out(repo, "dev")
+
+    # Pull latest submodule main commit
+    repo.git.submodule("update", "--remote", "si_gh_actions")
+
+    if compare_folders("si_gh_actions/.github", ".github"):
+        print("Workflows are identical.")
+    else:
+        print("Workflows differ. Updating workflows from submodule.")
+        copy_files_to_root([], "si_gh_actions/.github/")
+
 
 if __name__ == "__main__":
     main()
