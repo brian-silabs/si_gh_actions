@@ -412,7 +412,9 @@ jobs:
               copy_slpb_dirs "${SOLUTION_ABS_DIR}" "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}/slpb/default" "default->post-build"
 
               # Zip artifacts for release upload
-              zip -q -r "${DEFAULT_PROJECT_ARTIFACTS_ABS_FILE_DEST}" "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
+              pushd "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}" >/dev/null
+                zip -q -r "${DEFAULT_PROJECT_ARTIFACTS_ABS_FILE_DEST}" .
+              popd >/dev/null
             popd >/dev/null
           popd >/dev/null
 
