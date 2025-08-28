@@ -430,30 +430,44 @@ jobs:
               OPN="${!opn_var-}"     # may be empty
               CFG="${!cfg_var-}"     # may be empty
 
-              PROJECT_CONFIG_ABS_OUT_DIR="${SOLUTION_ABS_DIR}/${PROJECT_NAME}_${NAME}"
-              echo "Generating TARGET ${i}: name=${NAME:-<none>} opn=${OPN:-<none>} cfg=${CFG:-<none>} → ${PROJECT_CONFIG_ABS_OUT_DIR}"
-              mkdir -p "${PROJECT_CONFIG_ABS_OUT_DIR}"
+              # Delete existing cmake directory if any
+              rm -rf "${SOL_ABS_DIR_CMAKE}"
+
+              PROJECT_CONFIG_ARTIFACTS_ABS_DIR="${SOLUTION_ABS_DIR}/${PROJECT_NAME}_${NAME}_artifacts"
+              PROJECT_CONFIG_ARTIFACTS_ABS_FILE_DEST="${POST_BUILD_ARTIFACTS_ABS_DIR}/${PROJECT_NAME}_${NAME}_artifacts.zip"
+              echo "Generating TARGET ${i}: name=${NAME:-<none>} opn=${OPN:-<none>} cfg=${CFG:-<none>} → ${PROJECT_CONFIG_ARTIFACTS_ABS_DIR}"
+              mkdir -p "${PROJECT_CONFIG_ARTIFACTS_ABS_DIR}"
 
               # Build slc args conditionally so we don't pass empty flags
-              SLC_ARGS=( generate "${SLCP_FILENAME}" -cpsdk -tlcn gcc -o cmake -d "${PROJECT_CONFIG_ABS_OUT_DIR}" )
+              SLC_ARGS=( generate "${SLCP_FILENAME}" -cpsdk -tlcn gcc -o cmake --force )
               [[ -n "${OPN}" ]] && SLC_ARGS+=( --with "${OPN}" )
               [[ -n "${CFG}" ]] && SLC_ARGS+=( --configuration "${CFG}" )
 
               pushd "${SOLUTION_ABS_DIR}" >/dev/null
                 slc "${SLC_ARGS[@]}"
                 echo "=== Building ${PROJECT_NAME}_${NAME} ==="
-                pushd "${PROJECT_CONFIG_ABS_OUT_DIR}" >/dev/null
+                pushd "${SOL_ABS_DIR_CMAKE}" >/dev/null
                   cmake --workflow --preset project --fresh
                 popd >/dev/null
               popd >/dev/null
 
+              # Create size report
+              arm-none-eabi-size "${SOL_ABS_DIR_CMAKE}/build/default_config/${PROJECT_NAME}.out" -A >> "${SOL_ABS_DIR_CMAKE}/build/default_config/${PROJECT_NAME}_SizeReport.log"
+              # Copy EVERYTHING from the default_config build tree
+              cp -a "${SOL_ABS_DIR_CMAKE}/build/default_config/." "${PROJECT_CONFIG_ARTIFACTS_ABS_DIR}"
+
               # Copy SLPB-declared dirs into POST_BUILD artifacts under a namespaced folder
-              copy_slpb_dirs "${SOLUTION_ABS_DIR}" "${POST_BUILD_ARTIFACTS_ABS_DIR}/slpb/${PROJECT_NAME}_${NAME}" "target:${NAME}->post-build"
+              copy_slpb_dirs "${SOLUTION_ABS_DIR}" "${PROJECT_CONFIG_ARTIFACTS_ABS_DIR}/slpb/${PROJECT_NAME}_${NAME}" "target:${NAME}->post-build"
+
+              # Zip artifacts for release upload
+              pushd "${PROJECT_CONFIG_ARTIFACTS_ABS_DIR}" >/dev/null
+                zip -q -r "${PROJECT_CONFIG_ARTIFACTS_ABS_FILE_DEST}" .
+              popd >/dev/null
+              
             done
           else
             echo "No extra targets. Only default will be built."
           fi
-
 
       - name: Create Release Draft
         uses: release-drafter/release-drafter@v6
