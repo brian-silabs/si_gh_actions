@@ -1,19 +1,14 @@
-# All IDEs 
-!.gitmodules
-
-# Darwin specific
 .DS_Store
+vscode.conf
 
-# Simplicity IDE Gitignore
+# Ignore generated CMake related files
+cmake_gcc/
 
-GNU ARM v12.2.1 - Debug/
-GNU ARM v12.2.1 - Default/
+# Keep only custom project file
+!cmake_gcc/_project.cmake
 
-# Vscode Project Gitignore
-
-#IAR Project Gitignore
-settings/
-Default/
-ewarm-IAR
-
-# Any other pattern goes here
+# Ignore CI build artifacts and generated files from local build attempts
+.cicd/autogen/
+.cicd/pkg.lock
+.cicd/user.slconf
+.cache/

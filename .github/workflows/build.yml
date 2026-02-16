@@ -1,0 +1,33 @@
+name: Zigbee CI
+
+on:
+    push:
+        branches: [feature/cicd, main]
+    pull_request:
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Build CI Docker image
+              run: |
+                  docker build -t zigbee-ci ./.cicd
+
+            - name: Run CI inside container
+              run: |
+                  docker run --rm \
+                    -v ${{ github.workspace }}:/workspace \
+                    -w /workspace \
+                    zigbee-ci \
+                    bash -c "
+                      python3 .cicd/ci_build.py
+                    "
+
+            - name: Upload artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: zigbee-artifacts
+                  path: dist/*.tar.gz

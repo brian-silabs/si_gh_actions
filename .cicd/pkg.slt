@@ -1,0 +1,9 @@
+version = "0"
+
+[dependency]
+simplicity-sdk="2025.6.2"
+slc-cli="~"
+cmake="~"
+gcc-arm-none-eabi="~"
+ninja="~"
+commander = "~"
