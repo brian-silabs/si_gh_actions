@@ -12,3 +12,4 @@ cmake_gcc/
 .cicd/pkg.lock
 .cicd/user.slconf
 .cache/
+__pycache__/
