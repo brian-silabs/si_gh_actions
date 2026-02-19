@@ -48,7 +48,7 @@ class CmdError(RuntimeError):
     pass
 
 
-def run(
+def run_cmd(
     cmd: Sequence[str],
     *,
     cwd: Optional[Path] = None,
@@ -295,8 +295,6 @@ def copy_artifacts(build_dir: Path, dist_dir: Path, project_name: str) -> List[P
 # Artifact packaging
 # --------------------------
 
-import tarfile
-
 
 def package_artifacts(
     build_dir: Path,
@@ -331,48 +329,26 @@ def package_artifacts(
 
 
 def load_yaml(path: Path) -> dict:
-    import yaml  # dependency remains python3-pip installable; keep minimal usage
+    import yaml  # dependency reruns python3-pip installable; keep minimal usage
 
     return yaml.safe_load(path.read_text()) or {}
 
 
-@dataclass(frozen=True)
-class Args:
-    config: Path
-    recipe: Path
-    slt_version: str
-    base_url: str
-    cache_root: Path
-    repo_root: Path
-    slconf: Path
-    build_dir: Path
-    dist_dir: Path
-    project_name: Optional[str]
-    force_install: bool
-    package_tarball: Optional[str]
-
-
 # --------------------------
-# Main flow
+# run flow
 # --------------------------
 
 
-def main() -> None:
+def run() -> None:
     require_unix()
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--repo-root", default="/workspace")
-    parser.add_argument("--slt-version", default="1.1.0")
-    parser.add_argument(
-        "--slt-base-url",
-        default="https://www.silabs.com/documents/public/software",
-    )
-    args = parser.parse_args()
+    slt_version = "1.1.0"
+    slt_base_url = "https://www.silabs.com/documents/public/software"
 
     # ------------------------------------------------------------------
     # Authoritative paths
     # ------------------------------------------------------------------
-    repo_root = Path(args.repo_root).resolve()
+    repo_root = Path("/workspace").resolve()
     cicd_dir = repo_root / ".cicd"
 
     config_path = cicd_dir / "ci_config.yml"
@@ -417,11 +393,11 @@ def main() -> None:
     # ------------------------------------------------------------------
     # SLT download + extraction (cached)
     # ------------------------------------------------------------------
-    zip_name = slt_zip_name(args.slt_version)
+    zip_name = slt_zip_name(slt_version)
     zip_path = cache_root / zip_name
-    extract_root = cache_root / args.slt_version
+    extract_root = cache_root / slt_version
 
-    url = f"{args.slt_base_url.rstrip('/')}/{zip_name}"
+    url = f"{slt_base_url.rstrip('/')}/{zip_name}"
     download_if_needed(url, zip_path)
     slt_bin = extract_slt(zip_path, extract_root)
 
@@ -437,7 +413,7 @@ def main() -> None:
         log(
             "Installing SLT environment (expected to generate .cicd/autogen/pkg.slconf)"
         )
-        run(
+        run_cmd(
             [str(slt_bin), "install", "-f", str(recipe_path)],
             cwd=cicd_dir,
             env=env0,
@@ -463,13 +439,13 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Git safe.directory + submodules
     # ------------------------------------------------------------------
-    run(
+    run_cmd(
         ["git", "config", "--global", "--add", "safe.directory", str(repo_root)],
         env=env,
     )
 
     if config.get("submodules", False):
-        run(
+        run_cmd(
             ["git", "submodule", "update", "--init", "--recursive"],
             cwd=repo_root,
             env=env,
@@ -487,7 +463,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Generate + build
     # ------------------------------------------------------------------
-    run(
+    run_cmd(
         [
             "slc",
             "generate",
@@ -505,8 +481,8 @@ def main() -> None:
     if not build_dir.exists():
         raise RuntimeError("cmake_gcc directory not produced by slc generate")
 
-    run(["cmake", "--preset", "project"], cwd=build_dir, env=env)
-    run(["cmake", "--build", "--preset", "default_config"], cwd=build_dir, env=env)
+    run_cmd(["cmake", "--preset", "project"], cwd=build_dir, env=env)
+    run_cmd(["cmake", "--build", "--preset", "default_config"], cwd=build_dir, env=env)
 
     # ------------------------------------------------------------------
     # Package build directory (unchanged behavior)
@@ -521,11 +497,3 @@ def main() -> None:
     )
 
     log(f"Artifacts packaged: {package_path}")
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        sys.exit(1)

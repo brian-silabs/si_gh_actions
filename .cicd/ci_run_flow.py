@@ -1,38 +1,26 @@
+#!/usr/bin/env python3
+
 import sys
-
-from flows import (
-    run_build,
-    run_static_analysis,
-    run_unit_tests,
-    run_integration_tests,
-    run_coverage,
-    run_security,
-    run_smoke,
-    run_regression,
-)
-
-FLOWS = {
-    "build": run_build,
-    "static_analysis": run_static_analysis,
-    "unit_tests": run_unit_tests,
-    "integration_tests": run_integration_tests,
-    "coverage": run_coverage,
-    "security": run_security,
-    "smoke": run_smoke,
-    "regression": run_regression,
-}
+import importlib
 
 
-def main():
+def main() -> None:
     if len(sys.argv) != 2:
         raise SystemExit("Usage: ci_run_flow.py <flow>")
 
-    flow = sys.argv[1]
+    flow_name = sys.argv[1]
 
-    if flow not in FLOWS:
-        raise RuntimeError(f"Unknown flow: {flow}")
+    try:
+        module = importlib.import_module(f"flows.{flow_name}")
+    except ModuleNotFoundError as e:
+        raise RuntimeError(f"Unknown flow: {flow_name}") from e
 
-    FLOWS[flow]()
+    if not hasattr(module, "run"):
+        raise RuntimeError(
+            f"Flow '{flow_name}' does not define required run() function"
+        )
+
+    module.run()
 
 
 if __name__ == "__main__":
