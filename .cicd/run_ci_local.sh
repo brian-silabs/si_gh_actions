@@ -8,5 +8,5 @@ docker run --rm \
   -w /workspace \
   zigbee-ci \
   bash -c "
-    python3 .cicd/ci_build.py
+    python3 .cicd/ci_run_flow.py
   "

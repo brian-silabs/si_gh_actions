@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  flows:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        flow:
+          # - static_analysis
+          # - unit_tests
+          # - integration_tests
+          # - coverage
+          # - security
+          - build
+          # - smoke
+          # - regression
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build CI container
+        run: docker build -t si-ci .
+
+      - name: Run flow
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            si-ci \
+            python3 .cicd/ci_run_flow.py ${{ matrix.flow }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.flow }}
+          path: dist/${{ matrix.flow }}

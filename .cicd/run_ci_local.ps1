@@ -18,7 +18,7 @@ docker run --rm `
     -w /workspace `
     $ImageName `
     bash -c "set -e;
-        python3 .cicd/ci_build.py
+        python3 .cicd/ci_run_flow.py
     "
 
 Write-Host "CI run complete."
