@@ -28,7 +28,7 @@ jobs:
           submodules: recursive
 
       - name: Build CI container
-        run: docker build -t si-ci .
+        run: docker build -t si-ci ./.cicd
 
       - name: Run flow
         run: |
