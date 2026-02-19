@@ -7,6 +7,9 @@ RUN apt-get update && \
         python3 \
         python3-yaml \
         git \
+        clang-tidy \
+        clang-tools \
+        cppcheck \
         unzip \
         bzip2 \
         ca-certificates \
