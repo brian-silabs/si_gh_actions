@@ -43,6 +43,8 @@ def run() -> None:
 
     dist_dir.mkdir(parents=True, exist_ok=True)
 
+    jobs = multiprocessing.cpu_count()
+
     subprocess.run(
         ["git", "config", "--global", "--add", "safe.directory", str(repo_root)],
         check=True,
@@ -122,7 +124,9 @@ def run() -> None:
     # --------------------------------------------------
     # 5. clang-tidy
     # --------------------------------------------------
-    print("\nRunning clang-tidy static analysis...\n")
+
+    print("Running clang-tidy static analysis...\n")
+
     tidy_output = dist_dir / "clang-tidy.txt"
 
     with tidy_output.open("w") as f:
@@ -136,56 +140,76 @@ def run() -> None:
             + sources,
             stdout=f,
             stderr=subprocess.STDOUT,
-            check=False,  # important
+            text=True,
+            check=False,  # do NOT raise automatically
         )
 
     if tidy_result.returncode != 0:
         print("\nStatic analysis (clang-tidy) reported issues.")
         print(f"See report: {tidy_output}\n")
 
-        with tidy_output.open() as f:
-            lines = f.readlines()
+        errors = 0
+        warnings = 0
 
-        warnings = sum(1 for l in lines if "warning:" in l)
-        errors = sum(1 for l in lines if "error:" in l)
+        if tidy_output.exists():
+            with tidy_output.open() as f:
+                for line in f:
+                    if "error:" in line:
+                        errors += 1
+                    elif "warning:" in line:
+                        warnings += 1
 
-        print(f"\nclang-tidy summary: {errors} errors, {warnings} warnings")
+        print(f"clang-tidy summary: " f"{errors} errors, " f"{warnings} warnings")
+
+        # Helpful for diagnosing non-finding failures
+        print(f"clang-tidy exit code: {tidy_result.returncode}\n")
 
     # --------------------------------------------------
     # 6. cppcheck (SARIF output)
     # --------------------------------------------------
-    print("\nRunning cppcheck static analysis...\n")
+    print("Running cppcheck static analysis...\n")
+
     sarif_path = dist_dir / "cppcheck.sarif"
+    cpp_txt = dist_dir / "cppcheck.txt"
 
-    jobs = multiprocessing.cpu_count()
-
-    cpp_result = subprocess.run(
-        [
-            "cppcheck",
-            "--quiet",
-            "--error-exitcode=1",
-            "--enable=warning,performance,portability",
-            f"--jobs={jobs}",
-            "--output-format=sarif",
-            f"--output-file={sarif_path}",
-        ]
-        + sources,
-        check=False,
-    )
+    with cpp_txt.open("w") as f:
+        cpp_result = subprocess.run(
+            [
+                "cppcheck",
+                "--quiet",
+                "--error-exitcode=1",
+                "--enable=warning,performance,portability",
+                "-j",
+                str(jobs),
+                "--output-format=sarif",
+                f"--output-file={sarif_path}",
+            ]
+            + sources,
+            stdout=f,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,  # do NOT raise automatically
+        )
 
     if cpp_result.returncode != 0:
         print("\nStatic analysis (cppcheck) reported issues.")
-        print(f"See report: {sarif_path}\n")
+        print(f"See SARIF report: {sarif_path}")
+        print(f"See full log: {cpp_txt}\n")
 
         sarif_errors = 0
         sarif_warnings = 0
         sarif_notes = 0
+
+        notif_errors = 0
+        notif_warnings = 0
+        notif_notes = 0
 
         if sarif_path.exists():
             with sarif_path.open() as f:
                 sarif = json.load(f)
 
             for run in sarif.get("runs", []):
+                # Normal findings
                 for result in run.get("results", []):
                     level = result.get("level", "warning")
                     if level == "error":
@@ -195,12 +219,35 @@ def run() -> None:
                     else:
                         sarif_notes += 1
 
+                # Tool execution notifications
+                for inv in run.get("invocations", []) or []:
+                    for n in inv.get("toolExecutionNotifications", []) or []:
+                        level = n.get("level", "warning")
+                        if level == "error":
+                            notif_errors += 1
+                        elif level == "warning":
+                            notif_warnings += 1
+                        else:
+                            notif_notes += 1
+
         print(
-            f"\ncppcheck summary: "
+            f"cppcheck summary: "
             f"{sarif_errors} errors, "
             f"{sarif_warnings} warnings, "
             f"{sarif_notes} notes"
         )
+
+        if (sarif_errors + sarif_warnings + sarif_notes) == 0 and (
+            notif_errors + notif_warnings + notif_notes
+        ) > 0:
+            print(
+                f"cppcheck execution notifications: "
+                f"{notif_errors} errors, "
+                f"{notif_warnings} warnings, "
+                f"{notif_notes} notes"
+            )
+
+        print(f"cppcheck exit code: {cpp_result.returncode}\n")
 
     exit_code = 0
 
