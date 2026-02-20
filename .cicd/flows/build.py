@@ -261,7 +261,7 @@ def copy_artifacts(build_dir: Path, dist_dir: Path, project_name: str) -> List[P
 
     into:
 
-        <dist_dir>/<project_name>/
+        <dist_dir>/build/<project_name>/
 
     Returns list of copied artifact paths.
     """
@@ -279,7 +279,8 @@ def copy_artifacts(build_dir: Path, dist_dir: Path, project_name: str) -> List[P
             f"Available files: {available}"
         )
 
-    target_dir = dist_dir / project_name
+    # 🔥 Matrix-aligned location
+    target_dir = dist_dir / "build" / project_name
     target_dir.mkdir(parents=True, exist_ok=True)
 
     copied: List[Path] = []
@@ -313,7 +314,7 @@ def package_artifacts(
 
     copied_files = copy_artifacts(build_dir, dist_dir, project_name)
 
-    package_path = dist_dir / package_name
+    package_path = dist_dir / "build" / package_name
 
     with tarfile.open(package_path, "w:gz") as tar:
         for file in copied_files:
