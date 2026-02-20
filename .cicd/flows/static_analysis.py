@@ -60,7 +60,7 @@ def run() -> None:
         check=True,
     )
 
-    if not cmake_build_dir.exists():
+    if not cmake_env_dir.exists():
         raise RuntimeError("cmake_gcc directory not produced by slc generate")
 
     # --------------------------------------------------
