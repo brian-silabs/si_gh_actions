@@ -42,6 +42,11 @@ def run() -> None:
 
     dist_dir.mkdir(parents=True, exist_ok=True)
 
+    subprocess.run(
+        ["git", "config", "--global", "--add", "safe.directory", str(repo_root)],
+        check=True,
+    )
+
     # --------------------------------------------------
     # 2. Generate project via SLC
     # --------------------------------------------------
