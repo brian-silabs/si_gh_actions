@@ -16,7 +16,7 @@ jobs:
           # - unit_tests
           # - integration_tests
           # - coverage
-          # - security
+          - security
           - build
           # - smoke
           # - regression
