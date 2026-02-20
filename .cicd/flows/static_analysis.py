@@ -92,13 +92,24 @@ def run() -> None:
         check=True,
     )
 
-    sources = [
-        str(repo_root / f)
-        for f in result.stdout.splitlines()
-        if f.endswith((".c", ".cc", ".cpp", ".h", ".hpp"))
-        and "autogen" not in f
-        and "generated" not in f
-    ]
+    sources = []
+
+    for f in result.stdout.splitlines():
+        if not f.endswith((".c", ".cc", ".cpp", ".h", ".hpp")):
+            continue
+
+        # Exclude generated and vendor code
+        if (
+            "autogen/" in f
+            or "generated/" in f
+            or "simplicity_sdk_" in f
+            or "/third_party/" in f
+            or "/util/third_party/" in f
+            or "config/" in f
+        ):
+            continue
+
+        sources.append(str(repo_root / f))
 
     # --------------------------------------------------
     # 5. clang-tidy
@@ -111,7 +122,7 @@ def run() -> None:
                 "clang-tidy",
                 f"-p={cmake_build_dir}",
                 "-checks=bugprone-*,clang-analyzer-*",
-                "-warnings-as-errors=*",
+                "-warnings-as-errors=bugprone-*,clang-analyzer-*",
             ]
             + sources,
             stdout=f,
