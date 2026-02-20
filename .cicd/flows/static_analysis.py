@@ -1,6 +1,7 @@
 # .cicd/flows/static_analysis.py
 
 import subprocess
+import multiprocessing
 from pathlib import Path
 import os
 import json
@@ -156,17 +157,20 @@ def run() -> None:
     print("\nRunning cppcheck static analysis...\n")
     sarif_path = dist_dir / "cppcheck.sarif"
 
+    jobs = multiprocessing.cpu_count()
+
     cpp_result = subprocess.run(
         [
             "cppcheck",
             "--quiet",
             "--error-exitcode=1",
             "--enable=warning,performance,portability",
+            f"--jobs={jobs}",
             "--output-format=sarif",
             f"--output-file={sarif_path}",
-            str(repo_root),
-        ],
-        check=False,  # important
+        ]
+        + sources,
+        check=False,
     )
 
     if cpp_result.returncode != 0:
