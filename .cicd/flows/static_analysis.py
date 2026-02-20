@@ -2,8 +2,8 @@
 
 import subprocess
 from pathlib import Path
-import fnmatch
 import os
+import json
 from lib.slt_env import setup_slt_environment
 from lib.project import detect_single_slcp
 
@@ -39,6 +39,8 @@ def run() -> None:
 
     # Make tools globally visible for this process
     os.environ.update(env)
+
+    dist_dir.mkdir(parents=True, exist_ok=True)
 
     # --------------------------------------------------
     # 2. Generate project via SLC
@@ -114,6 +116,7 @@ def run() -> None:
     # --------------------------------------------------
     # 5. clang-tidy
     # --------------------------------------------------
+    print("\nRunning clang-tidy static analysis...\n")
     tidy_output = dist_dir / "clang-tidy.txt"
 
     with tidy_output.open("w") as f:
@@ -127,15 +130,25 @@ def run() -> None:
             + sources,
             stdout=f,
             stderr=subprocess.STDOUT,
-            check=True,
+            check=False,  # important
         )
 
     if tidy_result.returncode != 0:
-        raise SystemExit(tidy_result.returncode)
+        print("\nStatic analysis (clang-tidy) reported issues.")
+        print(f"See report: {tidy_output}\n")
+
+        with tidy_output.open() as f:
+            lines = f.readlines()
+
+        warnings = sum(1 for l in lines if "warning:" in l)
+        errors = sum(1 for l in lines if "error:" in l)
+
+        print(f"\nclang-tidy summary: {errors} errors, {warnings} warnings")
 
     # --------------------------------------------------
     # 6. cppcheck (SARIF output)
     # --------------------------------------------------
+    print("\nRunning cppcheck static analysis...\n")
     sarif_path = dist_dir / "cppcheck.sarif"
 
     cpp_result = subprocess.run(
@@ -148,8 +161,47 @@ def run() -> None:
             f"--output-file={sarif_path}",
             str(repo_root),
         ],
-        check=True,
+        check=False,  # important
     )
 
     if cpp_result.returncode != 0:
-        raise SystemExit(cpp_result.returncode)
+        print("\nStatic analysis (cppcheck) reported issues.")
+        print(f"See report: {sarif_path}\n")
+
+        sarif_errors = 0
+        sarif_warnings = 0
+        sarif_notes = 0
+
+        if sarif_path.exists():
+            with sarif_path.open() as f:
+                sarif = json.load(f)
+
+            for run in sarif.get("runs", []):
+                for result in run.get("results", []):
+                    level = result.get("level", "warning")
+                    if level == "error":
+                        sarif_errors += 1
+                    elif level == "warning":
+                        sarif_warnings += 1
+                    else:
+                        sarif_notes += 1
+
+        print(
+            f"\ncppcheck summary: "
+            f"{sarif_errors} errors, "
+            f"{sarif_warnings} warnings, "
+            f"{sarif_notes} notes"
+        )
+
+    exit_code = 0
+
+    if tidy_result.returncode != 0:
+        exit_code = 1
+
+    if cpp_result.returncode != 0:
+        exit_code = 1
+
+    if exit_code != 0:
+        print("\nStatic analysis failed.")
+        print("Download the CI artifact 'static_analysis' for full reports.\n")
+        raise SystemExit(exit_code)
