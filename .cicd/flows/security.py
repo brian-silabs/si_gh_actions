@@ -5,7 +5,8 @@ import os
 import subprocess
 from pathlib import Path
 from typing import Tuple
-
+from lib.slt_env import setup_slt_environment
+from lib.project import detect_single_slcp
 
 # --------------------------------------------------
 # Helpers
@@ -121,6 +122,41 @@ def run() -> None:
 
     if not which("grype"):
         raise RuntimeError("Missing required tool: grype")
+
+    # --------------------------------------------------
+    # 1. Setup SLT environment
+    # --------------------------------------------------
+    env = setup_slt_environment(repo_root)
+
+    # Make tools globally visible for this process
+    os.environ.update(env)
+
+    dist_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        ["git", "config", "--global", "--add", "safe.directory", str(repo_root)],
+        check=True,
+    )
+
+    # --------------------------------------------------
+    # 2. Generate project via SLC
+    # --------------------------------------------------
+    slcp_path = detect_single_slcp(repo_root)
+
+    subprocess.run(
+        [
+            "slc",
+            "generate",
+            "--slconf",
+            str(repo_root / ".cicd/user.slconf"),
+            "-p",
+            str(slcp_path),
+            "-d",
+            str(repo_root),
+        ],
+        cwd=repo_root,
+        check=True,
+    )
 
     # --------------------------------------------------
     # 2. Detect SBOM
